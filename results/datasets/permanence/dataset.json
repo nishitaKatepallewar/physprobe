@@ -1,0 +1,15 @@
+{
+  "type": "synthetic",
+  "family": "permanence",
+  "frames": 16,
+  "render_res": 256,
+  "floor": "noise",
+  "view_m": 8.0,
+  "fps": 24.0,
+  "seed": 0,
+  "targets": {
+    "possible": "binary"
+  },
+  "group": "scene",
+  "plugins": []
+}

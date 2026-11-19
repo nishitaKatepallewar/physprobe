@@ -1,0 +1,17 @@
+{
+  "type": "synthetic",
+  "family": "velocity",
+  "frames": 16,
+  "render_res": 256,
+  "floor": "noise",
+  "view_m": 8.0,
+  "fps": 24.0,
+  "seed": 0,
+  "targets": {
+    "direction_deg": "circular",
+    "speed": "scalar",
+    "vx,vy": "vector"
+  },
+  "group": "start_id",
+  "plugins": []
+}
