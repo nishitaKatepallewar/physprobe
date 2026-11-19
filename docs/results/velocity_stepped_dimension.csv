@@ -1,0 +1,13 @@
+layer,task,n_probes,probe_sequence_dim,score_before_erasure,score_after_rank_k_erasure,rank_k
+4,direction,1,2,0.18,0.00,2
+4,speed,7,7,0.91,0.00,1
+6,direction,1,2,0.65,0.00,2
+6,speed,9,9,0.94,0.00,1
+8,direction,24,48,0.86,0.00,2
+8,speed,21,21,0.97,0.00,1
+10,direction,9,18,0.89,0.00,2
+10,speed,21,21,0.96,0.00,1
+12,direction,21,42,0.97,0.00,2
+12,speed,32,32,0.97,0.00,1
+23,direction,17,34,0.97,0.00,2
+23,speed,36,36,0.99,0.00,1

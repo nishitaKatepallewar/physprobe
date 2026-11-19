@@ -1,0 +1,23 @@
+stimuli,layer,method,n_probes,dims,mae_to_target_deg
+velocity,8,none,0,0,93.5
+velocity,8,probe subspace,1,2,85.5
+velocity,8,probe subspace,2,4,73.6
+velocity,8,probe subspace,3,6,55.0
+velocity,8,probe subspace,5,10,24.2
+velocity,8,probe subspace,10,20,4.9
+velocity,8,probe subspace,15,30,4.6
+velocity,8,probe subspace,20,40,4.0
+velocity,8,probe subspace,25,50,4.5
+velocity,8,probe subspace,30,60,4.2
+velocity,8,probe subspace,39,78,3.8
+velocity,8,mean shift top-2 axes,,2,7.7
+velocity,8,mean shift all axes,,7,4.4
+velocity_stepped,10,none,0,0,95.3
+velocity_stepped,10,probe subspace,1,2,82.1
+velocity_stepped,10,probe subspace,2,4,60.4
+velocity_stepped,10,probe subspace,3,6,27.9
+velocity_stepped,10,probe subspace,5,10,11.0
+velocity_stepped,10,probe subspace,10,20,6.0
+velocity_stepped,10,probe subspace,12,24,6.2
+velocity_stepped,10,mean shift top-2 axes,,2,36.3
+velocity_stepped,10,mean shift all axes,,7,15.2
