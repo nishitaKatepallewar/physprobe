@@ -20,8 +20,11 @@ import numpy as np
 import pandas as pd
 from numpy.lib.format import open_memmap
 
-from .datasets import VideoDataset
-from .models import AttnEdit, Capture, Encoder
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # torch is only needed to extract, not to read a cache
+    from .datasets import VideoDataset
+    from .models import AttnEdit, Encoder
 
 
 def parse_layers(spec: str | None, n_layers: int) -> tuple:
@@ -43,6 +46,7 @@ def extract(ds: VideoDataset, enc: Encoder, out: str | Path, batch_size: int = 8
             frames: int | None = None, patch_layers=(), time_layers=(), fc1_layers=(),
             fc2_layers=(), attn_edit: AttnEdit | None = None, attn_stats: bool = False,
             limit: int | None = None, progress: bool = True) -> "ActivationCache":
+    from .models import Capture
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     N = len(ds) if limit is None else min(limit, len(ds))
