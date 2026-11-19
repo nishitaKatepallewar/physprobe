@@ -1,0 +1,13 @@
+torch>=2.2
+transformers>=4.53        # first release with V-JEPA 2 (VJEPA2Model)
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+pillow
+tqdm
+opencv-python-headless    # only needed to read video files in folder datasets
+# optional:
+# umap-learn              # `manifold --embed umap`
+# ripser                  # loop persistence column in `manifold`
