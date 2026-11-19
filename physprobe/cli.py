@@ -679,6 +679,12 @@ def cmd_demo(a):
           f"      python -m physprobe steer --acts {a.out} --out {a.out}/steer")
 
 
+def cmd_export(a):
+    from .export import export_bundle
+    out = export_bundle(a.runs, a.out, a.data, a.labels or None, a.zip)
+    print(f"-> {out}")
+
+
 def cmd_gui(a):
     import subprocess
     try:
@@ -873,6 +879,14 @@ def main(argv=None):
     p = sub.add_parser("report", help="collect a run folder's figures and tables into report.html")
     p.add_argument("--run", required=True)
     p.set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("export", help="bundle results for sharing or hosting, without activation arrays")
+    p.add_argument("--runs", default="runs", help="results folder")
+    p.add_argument("--data", default="data", help="datasets folder (for preview images)")
+    p.add_argument("--out", required=True, help="bundle folder to write")
+    p.add_argument("--labels", nargs="*", default=[], help="labels to export shapes for (default: design factors)")
+    p.add_argument("--zip", action="store_true", help="also write <out>.zip")
+    p.set_defaults(fn=cmd_export)
 
     p = sub.add_parser("gui", help="open the interactive explorer in a browser")
     p.add_argument("--runs", default="runs", help="results folder to explore")
