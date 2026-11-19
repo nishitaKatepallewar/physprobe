@@ -40,8 +40,15 @@ def _rel(p: Path, root: Path) -> str:
 
 
 def discover(runs: str | Path, data: str | Path | None = None) -> Found:
+    """Scan one results folder (live results or an exported bundle).
+
+    Each activation set gets a kind: "live" (activation arrays on disk), "bundle"
+    (precomputed shapes from `physprobe export`) or "missing" (neither: results only).
+    """
     runs = Path(runs)
     caches, probes, ablations, attention, datasets = [], [], [], [], []
+    if data is None and (runs / "bundle.json").exists():
+        data = runs / "datasets"  # bundles carry their dataset previews
     if runs.exists():
         for meta in sorted(runs.rglob("meta.json")):
             d = meta.parent
@@ -51,9 +58,11 @@ def discover(runs: str | Path, data: str | Path | None = None) -> Found:
                 continue
             if info["layers"] is None:
                 continue  # some other kind of meta.json
-            ok = (d / "pooled.npy").exists() and (d / "labels.csv").exists()
-            # without the .npy files (e.g. a results zip) the set is listed but can't be explored
-            caches.append({"path": str(d), "name": _rel(d, runs), **info, "missing": not ok})
+            live = (d / "pooled.npy").exists() and (d / "labels.csv").exists()
+            bundled = (d / "shapes").is_dir() and any((d / "shapes").glob("*.npz"))
+            kind = "live" if live else "bundle" if bundled else "missing"
+            caches.append({"path": str(d), "name": _rel(d, runs), **info, "kind": kind,
+                           "missing": kind == "missing"})
         for f in sorted(runs.rglob("probe_summary.csv")):
             probes.append({"path": str(f.parent), "name": _rel(f.parent, runs)})
         for f in sorted(runs.rglob("ablation_table.csv")):
@@ -66,12 +75,65 @@ def discover(runs: str | Path, data: str | Path | None = None) -> Found:
                 attention.append({"path": str(f.parent), "name": _rel(f.parent, runs)})
     if data is not None and Path(data).exists():
         for f in sorted(Path(data).rglob("dataset.json")):
+            if (f.parent / "manifest.csv").exists() is False:
+                continue
             m = json.loads(f.read_text())
             n = sum(1 for _ in open(f.parent / "manifest.csv")) - 1 if (f.parent / "manifest.csv").exists() else 0
             datasets.append({"path": str(f.parent), "name": _rel(f.parent, Path(data)), "type": m.get("type"),
                              "family": m.get("family", m.get("source", "")), "videos": n,
-                             "targets": m.get("targets", {})})
+                             "targets": m.get("targets", {}),
+                             "preview": str(f.parent / "preview.png") if (f.parent / "preview.png").exists() else None})
     return Found(caches, probes, ablations, attention, datasets)
+
+
+def discover_many(roots: list) -> Found:
+    """roots: [(label, runs, data)]. Names get a 'label: ' prefix when label is set."""
+    merged = Found([], [], [], [], [])
+    for label, runs, data in roots:
+        f = discover(runs, data)
+        for field in ("caches", "probes", "ablations", "attention", "datasets"):
+            for e in getattr(f, field):
+                if label:
+                    e = {**e, "name": f"{label}: {e['name']}"}
+                getattr(merged, field).append(e)
+    return merged
+
+
+# ------------------------------------------------------------------ bundles
+
+
+class BundleSet:
+    """An activation set from a results bundle: labels, metadata and precomputed shapes."""
+
+    def __init__(self, path: str):
+        self.root = Path(path)
+        self.meta = json.loads((self.root / "meta.json").read_text())
+        self.labels = pd.read_csv(self.root / "labels.csv")
+        self.n_layers = self.meta["n_layers"]
+
+    @property
+    def targets(self) -> dict:
+        return self.meta.get("dataset_meta", {}).get("targets", {})
+
+    @property
+    def group(self):
+        return self.meta.get("dataset_meta", {}).get("group")
+
+    @property
+    def pez(self) -> int:
+        return self.n_layers // 3
+
+    def shape_labels(self) -> list:
+        return sorted(p.stem for p in (self.root / "shapes").glob("*.npz"))
+
+    def trajectory(self, by: str) -> dict:
+        z = np.load(self.root / "shapes" / f"{by}.npz", allow_pickle=False)
+        return {"levels": z["levels"], "scores": z["scores"].astype(np.float64), "var": z["var"],
+                "videos": z["videos"].astype(np.float64), "video_levels": z["video_levels"],
+                "circular": bool(z["circular"])}
+
+    def metrics(self, by: str) -> pd.DataFrame:
+        return pd.read_csv(self.root / "shapes" / f"{by}.csv")
 
 
 def _cache_info(d: Path) -> dict:
