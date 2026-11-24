@@ -1,0 +1,41 @@
+{
+  "model": "vjepa2-l",
+  "kind": "vjepa2",
+  "res": 224,
+  "frames": 16,
+  "n": 360,
+  "n_layers": 24,
+  "d_model": 1024,
+  "d_mlp": 4096,
+  "n_heads": 16,
+  "grid": [
+    8,
+    14,
+    14
+  ],
+  "patch_layers": [],
+  "time_layers": [],
+  "fc1_layers": [],
+  "fc2_layers": [],
+  "attn_edit": null,
+  "dataset": "data/stepped24",
+  "dataset_meta": {
+    "type": "synthetic",
+    "family": "velocity_stepped",
+    "frames": 16,
+    "render_res": 256,
+    "floor": "noise",
+    "view_m": 8.0,
+    "fps": 24.0,
+    "seed": 0,
+    "targets": {
+      "direction_deg": "circular",
+      "speed": "scalar",
+      "vx,vy": "vector"
+    },
+    "group": "start_id",
+    "plugins": [
+      "/home/nishita-katepallewar/work/projects/physprobe/experiments/velocity_stepped.py"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "type": "shuffled",
+  "source": "/home/nishita-katepallewar/work/projects/physprobe/data/velocity",
+  "frames": 16,
+  "targets": {
+    "shuffled": "binary"
+  },
+  "group": "source_id"
+}

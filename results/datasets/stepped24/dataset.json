@@ -13,5 +13,7 @@
     "vx,vy": "vector"
   },
   "group": "start_id",
-  "plugins": []
+  "plugins": [
+    "/home/nishita-katepallewar/work/projects/physprobe/experiments/velocity_stepped.py"
+  ]
 }
