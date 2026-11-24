@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "physprobe"
+version = "0.1.0"
+description = "Probe physical variables and their geometry in frozen video encoders (V-JEPA 2)"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.2", "transformers>=4.53", "numpy", "pandas", "scipy", "scikit-learn",
+                "matplotlib", "pillow", "tqdm", "opencv-python-headless"]
+
+[project.optional-dependencies]
+gui = ["streamlit>=1.50", "plotly>=5.20"]
+extra = ["umap-learn", "ripser"]
+
+[project.scripts]
+physprobe = "physprobe.cli:main"
+
+[tool.setuptools]
+packages = ["physprobe", "physprobe.gui"]
