@@ -1,0 +1,64 @@
+stimuli,ablated_layers,combine,condition,target,read_layer,score
+velocity,1-4,or,base,direction_deg,10,0.989
+velocity,1-4,or,base,direction_deg,12,0.993
+velocity,1-4,or,base,direction_deg,23,0.989
+velocity,1-4,or,base,speed,10,0.983
+velocity,1-4,or,base,speed,12,0.987
+velocity,1-4,or,base,speed,23,0.981
+velocity,1-4,or,base,vx_vy,10,0.942
+velocity,1-4,or,base,vx_vy,12,0.950
+velocity,1-4,or,base,vx_vy,23,0.945
+velocity,1-4,or,combined s=3 t=1,direction_deg,10,0.982
+velocity,1-4,or,combined s=3 t=1,direction_deg,12,0.986
+velocity,1-4,or,combined s=3 t=1,direction_deg,23,0.985
+velocity,1-4,or,combined s=3 t=1,speed,10,0.982
+velocity,1-4,or,combined s=3 t=1,speed,12,0.990
+velocity,1-4,or,combined s=3 t=1,speed,23,0.982
+velocity,1-4,or,combined s=3 t=1,vx_vy,10,0.923
+velocity,1-4,or,combined s=3 t=1,vx_vy,12,0.940
+velocity,1-4,or,combined s=3 t=1,vx_vy,23,0.962
+velocity_stepped,7-8,or,base,direction_deg,10,0.940
+velocity_stepped,7-8,or,base,direction_deg,12,0.966
+velocity_stepped,7-8,or,base,direction_deg,23,0.911
+velocity_stepped,7-8,or,base,speed,10,0.963
+velocity_stepped,7-8,or,base,speed,12,0.978
+velocity_stepped,7-8,or,base,speed,23,0.931
+velocity_stepped,7-8,or,base,vx_vy,10,0.821
+velocity_stepped,7-8,or,base,vx_vy,12,0.943
+velocity_stepped,7-8,or,base,vx_vy,23,0.872
+velocity_stepped,7-8,or,spatial s=7,direction_deg,10,0.891
+velocity_stepped,7-8,or,spatial s=7,direction_deg,12,0.966
+velocity_stepped,7-8,or,spatial s=7,direction_deg,23,0.890
+velocity_stepped,7-8,or,spatial s=7,speed,10,0.948
+velocity_stepped,7-8,or,spatial s=7,speed,12,0.980
+velocity_stepped,7-8,or,spatial s=7,speed,23,0.877
+velocity_stepped,7-8,or,spatial s=7,vx_vy,10,0.770
+velocity_stepped,7-8,or,spatial s=7,vx_vy,12,0.928
+velocity_stepped,7-8,or,spatial s=7,vx_vy,23,0.831
+velocity_stepped,7-8,or,temporal t=3,direction_deg,10,0.941
+velocity_stepped,7-8,or,temporal t=3,direction_deg,12,0.975
+velocity_stepped,7-8,or,temporal t=3,direction_deg,23,0.864
+velocity_stepped,7-8,or,temporal t=3,speed,10,0.909
+velocity_stepped,7-8,or,temporal t=3,speed,12,0.958
+velocity_stepped,7-8,or,temporal t=3,speed,23,0.921
+velocity_stepped,7-8,or,temporal t=3,vx_vy,10,0.864
+velocity_stepped,7-8,or,temporal t=3,vx_vy,12,0.928
+velocity_stepped,7-8,or,temporal t=3,vx_vy,23,0.820
+velocity_stepped,7-8,or,combined s=3 t=1,direction_deg,10,0.896
+velocity_stepped,7-8,or,combined s=3 t=1,direction_deg,12,0.965
+velocity_stepped,7-8,or,combined s=3 t=1,direction_deg,23,0.856
+velocity_stepped,7-8,or,combined s=3 t=1,speed,10,0.961
+velocity_stepped,7-8,or,combined s=3 t=1,speed,12,0.973
+velocity_stepped,7-8,or,combined s=3 t=1,speed,23,0.946
+velocity_stepped,7-8,or,combined s=3 t=1,vx_vy,10,0.840
+velocity_stepped,7-8,or,combined s=3 t=1,vx_vy,12,0.939
+velocity_stepped,7-8,or,combined s=3 t=1,vx_vy,23,0.849
+velocity_stepped,4-6,or,combined s=3 t=1,direction_deg,10,0.579
+velocity_stepped,4-6,or,combined s=3 t=1,direction_deg,12,0.874
+velocity_stepped,4-6,or,combined s=3 t=1,direction_deg,23,0.766
+velocity_stepped,4-6,or,combined s=3 t=1,speed,10,0.965
+velocity_stepped,4-6,or,combined s=3 t=1,speed,12,0.970
+velocity_stepped,4-6,or,combined s=3 t=1,speed,23,0.916
+velocity_stepped,4-6,or,combined s=3 t=1,vx_vy,10,0.597
+velocity_stepped,4-6,or,combined s=3 t=1,vx_vy,12,0.881
+velocity_stepped,4-6,or,combined s=3 t=1,vx_vy,23,0.808

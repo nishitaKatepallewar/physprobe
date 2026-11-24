@@ -1,0 +1,8 @@
+run,dir_base,dir_abl,spd_base,spd_abl
+"ordinary, layers 7–8, combined (AND)",0.9889860231037476,0.9840837318776134,0.9831255207384068,0.9856768721126798
+"ordinary, layers 7–8, combined (OR)",0.9889860231037476,0.983178730712654,0.9831255207384068,0.9886906040852714
+"ordinary, layers 1–4, combined (OR)",0.989,0.982,0.983,0.982
+"stepped, layers 7–8, spatial s=7",0.94,0.891,0.963,0.948
+"stepped, layers 7–8, temporal t=3",0.94,0.941,0.963,0.909
+"stepped, layers 7–8, combined (OR)",0.94,0.896,0.963,0.961
+"stepped, layers 4–6, combined (OR)",0.94,0.579,0.963,0.965
