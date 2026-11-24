@@ -116,11 +116,14 @@ def cmd(*parts):
 # ------------------------------------------------------------------- overview
 
 
-CONTEXT = """
+REPO = os.environ.get("PHYSPROBE_REPO", "https://github.com/nishitaKatepallewar/physprobe")
+
+CONTEXT = f"""
 Probing and geometry results for frozen video encoders, produced with **physprobe**, an independent
 reimplementation of the analyses in Joseph et al. (2026), *Interpreting Physics in Video World Models*
 ([arXiv:2602.07050](https://arxiv.org/abs/2602.07050)). The code and stimuli are not those of the original
-authors; settings the paper leaves unspecified are documented in the repository README.
+authors; settings the paper leaves unspecified are documented in the [repository README]({REPO}#readme).
+Results and their comparison with the paper: [FINDINGS.md]({REPO}/blob/main/FINDINGS.md).
 """
 
 DEFINITIONS = """
@@ -582,4 +585,7 @@ pages = [st.Page(page_overview, title="Overview", default=True),
          st.Page(page_ablations, title="Attention ablations", url_path="ablations"),
          st.Page(page_attention, title="Attention distance", url_path="attention"),
          st.Page(page_datasets, title="Datasets", url_path="datasets")]
-st.navigation(pages).run()
+nav = st.navigation(pages)
+st.sidebar.markdown(f"[Code on GitHub]({REPO}) · [Findings]({REPO}/blob/main/FINDINGS.md) · "
+                    "[Paper](https://arxiv.org/abs/2602.07050)")
+nav.run()
