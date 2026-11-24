@@ -29,7 +29,7 @@ def _args():
 
 
 RUNS, DATA, HOSTED = _args()
-st.set_page_config(page_title="physprobe explorer", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="physprobe", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -155,7 +155,7 @@ tubelet).
 
 
 def page_overview():
-    st.title("physprobe explorer")
+    st.title("physprobe")
     st.markdown(CONTEXT)
     with st.expander("Definitions: stimuli, probes, shapes, ablations"):
         st.markdown(DEFINITIONS)
