@@ -1,0 +1,9 @@
+# Dependencies of the hosted explorer only (no torch: the model is not run here).
+streamlit>=1.50
+plotly>=5.20
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+pillow

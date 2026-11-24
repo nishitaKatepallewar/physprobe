@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -20,11 +22,13 @@ def _args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default="runs")
     ap.add_argument("--data", default="data")
+    ap.add_argument("--hosted", action="store_true",
+                    help="read-only mode for public hosting: no dataset creation or local probe runs")
     a, _ = ap.parse_known_args(sys.argv[1:])
-    return Path(a.runs).resolve(), Path(a.data).resolve()
+    return Path(a.runs).resolve(), Path(a.data).resolve(), a.hosted or os.environ.get("PHYSPROBE_HOSTED") == "1"
 
 
-RUNS, DATA = _args()
+RUNS, DATA, HOSTED = _args()
 st.set_page_config(page_title="physprobe explorer", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -56,24 +60,40 @@ def readout(value, label):
     st.markdown(f"<div class='readout'><b>{value}</b><span>{label}</span></div>", unsafe_allow_html=True)
 
 
+def sources():
+    """Results sources: the configured folder plus any bundles uploaded in this session."""
+    base = [("", str(RUNS), str(DATA) if DATA.exists() else None)]
+    return tuple(base + [(u["label"], u["path"], None) for u in st.session_state.get("uploads", [])])
+
+
 @st.cache_data(ttl=30, show_spinner=False)
+def _found(srcs):
+    return D.discover_many(list(srcs)).__dict__
+
+
 def found():
-    f = D.discover(RUNS, DATA)
-    return f.__dict__
+    return _found(sources())
 
 
 @st.cache_resource(show_spinner=False)
-def cache_of(path):
-    return D.load_cache(path)
+def cache_of(path, kind="live"):
+    return D.BundleSet(path) if kind == "bundle" else D.load_cache(path)
 
 
 @st.cache_data(show_spinner="Computing the shape at every layer...", max_entries=16)
-def trajectory(path, by, where, videos):
+def trajectory(path, kind, by, where, videos):
+    if kind == "bundle":
+        tr = cache_of(path, kind).trajectory(by)
+        if not videos:
+            tr["videos"] = None
+        return tr
     return D.manifold_trajectory(cache_of(path), by, where or None, k=3, with_videos=videos)
 
 
 @st.cache_data(show_spinner="Measuring the shape at every layer...", max_entries=16)
-def metrics(path, by, where, circular):
+def metrics(path, kind, by, where, circular):
+    if kind == "bundle":
+        return cache_of(path, kind).metrics(by)
     return D.manifold_metrics(cache_of(path), by, where or None, circular)
 
 
@@ -141,35 +161,64 @@ def page_overview():
         st.markdown(DEFINITIONS)
     f = found()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Activation sets", sum(not c.get("missing") for c in f["caches"]))
+    c1.metric("Activation sets", sum(not (c["ablated"] and c["kind"] == "missing") for c in f["caches"]))
     c2.metric("Probe runs", len(f["probes"]))
     c3.metric("Ablation runs", len(f["ablations"]))
     c4.metric("Datasets", len(f["datasets"]))
-    st.caption(f"Results folder: `{RUNS}`  \nData folder: `{DATA}`")
+    if not HOSTED:
+        st.caption(f"Results folder: `{RUNS}`  \nData folder: `{DATA}`")
+    upload_section()
 
     if not (f["caches"] or f["probes"]):
         st.info("No results in this folder. Results are created by making a dataset and extracting activations:\n\n"
                 "```\npython -m physprobe make velocity --out data/velocity\n"
                 "python -m physprobe extract --data data/velocity --out runs/vjepa2-l/velocity/acts\n```")
         return
-    if f["caches"]:
+    # conditions of an ablation run are listed on the ablation page, not here, unless they can be explored
+    listed = [c for c in f["caches"] if not (c["ablated"] and c["kind"] == "missing")]
+    if listed:
         st.subheader("Activation sets")
         st.caption("Each set: one stimulus dataset passed through one model; residual-stream activations at every layer.")
-        df = pd.DataFrame(f["caches"])
+        df = pd.DataFrame(listed)
         df["extras"] = [", ".join(n for n, k in (("MLP units", "fc1"), ("over time", "time"), ("ablated", "ablated"))
-                                  if r.get(k)) for r in f["caches"]]
-        df["status"] = np.where(df.get("missing", False) == True, "activations not on disk", "ready")  # noqa: E712
-        st.dataframe(df[["name", "dataset", "model", "videos", "layers", "extras", "status"]], hide_index=True,
+                                  if r.get(k)) for r in df.to_dict("records")]
+        df["shapes"] = df["kind"].map({"live": "computed on demand", "bundle": "precomputed",
+                                       "missing": "not available"})
+        st.dataframe(df[["name", "dataset", "model", "videos", "layers", "extras", "shapes"]], hide_index=True,
                      width="stretch")
-        if (df["status"] != "ready").any():
-            st.caption("“Activations not on disk”: the results exist but the activation arrays (.npy) were not "
-                       "copied. Probe and ablation pages are unaffected; the shape explorer requires the arrays.")
+        if (df["kind"] == "missing").any():
+            st.caption("Shapes “not available”: the probe results exist but neither the activation arrays (.npy) "
+                       "nor an exported bundle of their shapes is present. Probe and ablation pages are unaffected.")
     if f["probes"]:
         with st.expander(f"{len(f['probes'])} probe runs"):
             st.dataframe(pd.DataFrame(f["probes"])[["name"]], hide_index=True, width="stretch")
-    if st.button("Refresh"):
+    if not HOSTED and st.button("Refresh"):
         st.cache_data.clear()
         st.rerun()
+
+
+def upload_section():
+    with st.expander("Load a results bundle"):
+        st.markdown("A bundle holds probe results, ablations, attention statistics and precomputed shapes for one "
+                    "results folder, without the activation arrays. It is created where the activations are, with\n\n"
+                    "```\npython -m physprobe export --runs runs --out bundle --zip\n```\n\n"
+                    "Uploaded bundles are added to every page for the rest of this browser session and are not "
+                    "stored on the server.")
+        up = st.file_uploader("Bundle (.zip)", type=["zip"], key="bundle_upload")
+        if up is not None and up.file_id not in {u["id"] for u in st.session_state.get("uploads", [])}:
+            from physprobe.export import safe_extract
+            try:
+                root = safe_extract(up, tempfile.mkdtemp(prefix="physprobe_bundle_"))
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Bundle not loaded: {e}")
+            else:
+                label = Path(up.name).stem
+                st.session_state.setdefault("uploads", []).append({"id": up.file_id, "label": label,
+                                                                   "path": str(root)})
+                st.success(f"Loaded “{label}”. Its entries are prefixed with “{label}:”.")
+                st.rerun()
+        for u in st.session_state.get("uploads", []):
+            st.caption(f"Loaded: {u['label']}")
 
 
 # --------------------------------------------------------------------- shapes
@@ -181,10 +230,10 @@ def page_shapes():
          "that value) projected onto their principal axes, layer by layer. A closed ring indicates a circular "
          "code; a line or open curve indicates a magnitude code.")
     f = found()
-    ready = [c for c in f["caches"] if not c.get("missing")]
+    ready = [c for c in f["caches"] if c["kind"] in ("live", "bundle")]
     if not ready:
-        st.warning("No activation sets with activation arrays on disk. They are created by "
-                   "`python -m physprobe extract`; `python -m physprobe demo --out runs/demo` creates a simulated set.")
+        st.warning("No activation sets with shapes available. Shapes need the activation arrays (created by "
+                   "`python -m physprobe extract`) or an exported bundle (`python -m physprobe export`).")
         return
     names = [c["name"] for c in ready]
     default = next((i for i, n in enumerate(names) if "stepped24" in n and n.endswith("acts")),
@@ -192,16 +241,17 @@ def page_shapes():
     top = st.columns([3, 2, 2])
     name = top[0].selectbox("Activation set", names, index=default)
     entry = ready[names.index(name)]
-    c = cache_of(entry["path"])
-    cols = D.label_columns(c.labels)
+    kind = entry["kind"]
+    c = cache_of(entry["path"], kind)
+    cols = c.shape_labels() if kind == "bundle" else D.label_columns(c.labels)
     if not cols:
         st.warning("This set has no label column with between 2 and 60 distinct values.")
         return
     by = top[1].selectbox("Variable to trace", cols,
                           index=cols.index("direction_deg") if "direction_deg" in cols else 0)
-    where = top[2].text_input("Video subset (optional)", placeholder="speed >= 4",
+    where = top[2].text_input("Video subset (optional)", placeholder="speed >= 4", disabled=kind == "bundle",
                               help="A pandas expression over the label columns, for example `speed == 4` or "
-                                   "`possible == 1`.")
+                                   "`possible == 1`. Not available for precomputed (bundled) shapes.")
     if where:
         try:
             n = int(c.labels.eval(where).sum())
@@ -220,7 +270,7 @@ def page_shapes():
                                help="Activation norms grow with depth. Rescaling each layer to unit size makes "
                                     "shapes comparable across layers; off shows the original scale.")
     try:
-        traj = trajectory(entry["path"], by, where, show_videos)
+        traj = trajectory(entry["path"], kind, by, where, show_videos)
     except Exception as e:  # noqa: BLE001
         st.error(f"Shape computation failed: {e}")
         return
@@ -234,7 +284,7 @@ def page_shapes():
             st.plotly_chart(F.manifold_view(traj, layer, circular, dims, normalise, show_videos, by),
                             width="stretch", key=f"mf_{layer}_{dims}")
         with right:
-            m = metrics(entry["path"], by, where, circular)
+            m = metrics(entry["path"], kind, by, where, circular)
             row = m[m.layer == layer].iloc[0]
             var = traj["var"][layer]
             readout(f"{row.reliability:.2f}", "split-half reliability of the condition means "
@@ -275,10 +325,11 @@ def page_shapes():
         st.plotly_chart(F.filmstrip(traj, circular, current=st.session_state.get("shape_layer")),
                         width="stretch")
 
-    with st.expander("Equivalent command"):
-        st.code(cmd("python", "-m", "physprobe", "manifold", "--acts", entry["path"], "--out",
-                    str(Path(entry["path"]).parent / f"manifold_{by}"), "--by", by,
-                    *(["--where", where] if where else [])), language="bash")
+    if kind == "live":
+        with st.expander("Equivalent command"):
+            st.code(cmd("python", "-m", "physprobe", "manifold", "--acts", entry["path"], "--out",
+                        str(Path(entry["path"]).parent / f"manifold_{by}"), "--by", by,
+                        *(["--where", where] if where else [])), language="bash")
 
 
 # --------------------------------------------------------------------- probes
@@ -327,9 +378,10 @@ def page_probes():
                                  width="stretch")
 
     st.subheader("New probe run")
-    ready = [c for c in f["caches"] if not c.get("missing")]
+    ready = [c for c in f["caches"] if c["kind"] == "live"]
     if not ready:
-        st.caption("Requires an activation set with activation arrays on disk.")
+        st.caption("Requires an activation set with activation arrays on disk." +
+                   (" Not available in the hosted explorer." if HOSTED else ""))
         return
     name = st.selectbox("Activation set", [c["name"] for c in ready], key="probe_now")
     c = cache_of(ready[[x["name"] for x in ready].index(name)]["path"])
@@ -421,11 +473,13 @@ def preview_strip(path, n=4, frames=8):
 
 def page_datasets():
     st.title("Datasets")
-    lede("Stimulus sets available for extraction: previews of existing sets, generation of synthetic sets "
+    lede("Stimulus sets behind the results shown here, with example frames and labels." if HOSTED else
+         "Stimulus sets available for extraction: previews of existing sets, generation of synthetic sets "
          "with custom factor levels, and import of external videos with labels. Each step lists the "
          "extraction command.")
     f = found()
-    tab1, tab2, tab3 = st.tabs(["Browse", "New synthetic set", "Import videos"])
+    tabs = st.tabs(["Browse"] + ([] if HOSTED else ["New synthetic set", "Import videos"]))
+    tab1 = tabs[0]
 
     with tab1:
         if not f["datasets"]:
@@ -436,16 +490,26 @@ def page_datasets():
             name = st.selectbox("Preview", df["name"].tolist())
             d = f["datasets"][df["name"].tolist().index(name)]
             try:
-                img, lab = preview_strip(d["path"])
-                st.image(img, caption="Four videos (rows), eight frames each (left to right)", width="stretch")
-                st.dataframe(lab.drop(columns=[c for c in ("seed", "scene_seed") if c in lab]),
+                if d.get("preview"):
+                    st.image(d["preview"], caption="Example videos (rows), frames left to right", width="stretch")
+                    lab = pd.read_csv(Path(d["path"]) / "manifest.csv", nrows=8)
+                else:
+                    img, lab = preview_strip(d["path"])
+                    st.image(img, caption="Four videos (rows), eight frames each (left to right)", width="stretch")
+                st.dataframe(lab.drop(columns=[c for c in ("seed", "scene_seed", "path") if c in lab]),
                              hide_index=True, width="stretch")
             except Exception as e:  # noqa: BLE001
                 st.error(f"Preview failed: {e}")
-            st.markdown("Extraction command:")
-            st.code(cmd("python", "-m", "physprobe", "extract", "--data", d["path"], "--out",
-                        str(RUNS / "vjepa2-l" / Path(d["path"]).name / "acts"), "--model", "vjepa2-l",
-                        "--batch-size", "4"), language="bash")
+            if not HOSTED:
+                st.markdown("Extraction command:")
+                st.code(cmd("python", "-m", "physprobe", "extract", "--data", d["path"], "--out",
+                            str(RUNS / "vjepa2-l" / Path(d["path"]).name / "acts"), "--model", "vjepa2-l",
+                            "--batch-size", "4"), language="bash")
+    if HOSTED:
+        st.caption("Creating and importing datasets requires a local installation: "
+                   "`pip install -e \".[gui]\"`, then `python -m physprobe gui`.")
+        return
+    tab2, tab3 = tabs[1], tabs[2]
 
     with tab2:
         from physprobe import stimuli

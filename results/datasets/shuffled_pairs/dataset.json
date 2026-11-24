@@ -1,0 +1,10 @@
+{
+  "type": "shuffled",
+  "source": "/tmp/realdata/velocity",
+  "frames": 16,
+  "block": 2,
+  "targets": {
+    "shuffled": "binary"
+  },
+  "group": "source_id"
+}

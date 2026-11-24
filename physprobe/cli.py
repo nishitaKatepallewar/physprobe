@@ -679,6 +679,12 @@ def cmd_demo(a):
           f"      python -m physprobe steer --acts {a.out} --out {a.out}/steer")
 
 
+def cmd_export(a):
+    from .export import export_bundle
+    out = export_bundle(a.runs, a.out, a.data, a.labels or None, a.zip)
+    print(f"-> {out}")
+
+
 def cmd_gui(a):
     import subprocess
     try:
@@ -694,6 +700,8 @@ def cmd_gui(a):
     if a.no_browser:
         argv += ["--server.headless", "true"]
     argv += ["--", "--runs", str(Path(a.runs).resolve()), "--data", str(Path(a.data).resolve())]
+    if a.hosted:
+        argv.append("--hosted")
     print(f"physprobe explorer: http://localhost:{a.port}  (Ctrl+C to stop)")
     subprocess.run(argv)
 
@@ -874,11 +882,20 @@ def main(argv=None):
     p.add_argument("--run", required=True)
     p.set_defaults(fn=cmd_report)
 
+    p = sub.add_parser("export", help="bundle results for sharing or hosting, without activation arrays")
+    p.add_argument("--runs", default="runs", help="results folder")
+    p.add_argument("--data", default="data", help="datasets folder (for preview images)")
+    p.add_argument("--out", required=True, help="bundle folder to write")
+    p.add_argument("--labels", nargs="*", default=[], help="labels to export shapes for (default: design factors)")
+    p.add_argument("--zip", action="store_true", help="also write <out>.zip")
+    p.set_defaults(fn=cmd_export)
+
     p = sub.add_parser("gui", help="open the interactive explorer in a browser")
     p.add_argument("--runs", default="runs", help="results folder to explore")
     p.add_argument("--data", default="data", help="datasets folder")
     p.add_argument("--port", type=int, default=8501)
     p.add_argument("--no-browser", action="store_true", help="don't open a browser window (e.g. on a server)")
+    p.add_argument("--hosted", action="store_true", help="read-only mode, as on a public server")
     p.set_defaults(fn=cmd_gui)
 
     p = sub.add_parser("demo", help="write a SIMULATED activation cache to try the analyses on")

@@ -1,0 +1,10 @@
+{
+  "format": "physprobe-bundle",
+  "version": 1,
+  "created": "2026-11-19 10:54:46",
+  "source": "runs",
+  "activation_sets": 0,
+  "shapes": 0,
+  "probe_runs": 18,
+  "ablation_runs": 3
+}
