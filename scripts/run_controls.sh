@@ -61,4 +61,4 @@ $PY manifold --acts $OUT/velocity_stepped/acts --out $OUT/stepped_manifold --by 
 $PY manifold --acts $OUT/stepped24/acts        --out $OUT/stepped24/manifold --by direction_deg --embed isomap
 
 $PY report --run $OUT
-echo "done: open $OUT/report.html"
+echo "done: open $OUT/report.html, or explore with: python -m physprobe gui"

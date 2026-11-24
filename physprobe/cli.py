@@ -679,6 +679,25 @@ def cmd_demo(a):
           f"      python -m physprobe steer --acts {a.out} --out {a.out}/steer")
 
 
+def cmd_gui(a):
+    import subprocess
+    try:
+        import plotly  # noqa: F401
+        import streamlit  # noqa: F401
+    except ImportError:
+        sys.exit("The explorer needs two extra packages:  pip install streamlit plotly")
+    app = Path(__file__).parent / "gui" / "app.py"
+    theme = ["--theme.base", "light", "--theme.primaryColor", "#0e6f78", "--theme.backgroundColor", "#f6f8f9",
+             "--theme.secondaryBackgroundColor", "#e8eef1", "--theme.textColor", "#17212b"]
+    argv = [sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(a.port),
+            "--browser.gatherUsageStats", "false", "--client.toolbarMode", "viewer", *theme]
+    if a.no_browser:
+        argv += ["--server.headless", "true"]
+    argv += ["--", "--runs", str(Path(a.runs).resolve()), "--data", str(Path(a.data).resolve())]
+    print(f"physprobe explorer: http://localhost:{a.port}  (Ctrl+C to stop)")
+    subprocess.run(argv)
+
+
 def cmd_selftest(a):
     from .selftest import run
     sys.exit(0 if run(full=a.full) else 1)
@@ -854,6 +873,13 @@ def main(argv=None):
     p = sub.add_parser("report", help="collect a run folder's figures and tables into report.html")
     p.add_argument("--run", required=True)
     p.set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("gui", help="open the interactive explorer in a browser")
+    p.add_argument("--runs", default="runs", help="results folder to explore")
+    p.add_argument("--data", default="data", help="datasets folder")
+    p.add_argument("--port", type=int, default=8501)
+    p.add_argument("--no-browser", action="store_true", help="don't open a browser window (e.g. on a server)")
+    p.set_defaults(fn=cmd_gui)
 
     p = sub.add_parser("demo", help="write a SIMULATED activation cache to try the analyses on")
     p.add_argument("--out", required=True)
