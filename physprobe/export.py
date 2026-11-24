@@ -23,6 +23,7 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 FORMAT = "physprobe-bundle"
 VERSION = 1
@@ -36,6 +37,31 @@ def _labels_to_export(cache) -> list:
     wanted = set(cache.targets) | set(fam.grid if fam else ()) | {"possible", "shuffled", "violation"}
     keep = [c for c in cols if c in wanted]
     return keep or cols[:4]
+
+
+PATH_KEYS = {"dataset", "source", "root", "path"}
+
+
+def _scrub(obj):
+    """Replace machine-specific paths with their last component, so a bundle does not reveal
+    the folder layout of the computer it was exported from."""
+    if isinstance(obj, dict):
+        return {k: (Path(v).name if k in PATH_KEYS and isinstance(v, str) and ("/" in v or "\\" in v)
+                    else _scrub(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub(v) for v in obj]
+    return obj
+
+
+def _copy_json(src: Path, dst: Path):
+    dst.write_text(json.dumps(_scrub(json.loads(src.read_text())), indent=2))
+
+
+def _copy_manifest(src: Path, dst: Path):
+    m = pd.read_csv(src)
+    for col in PATH_KEYS & set(m.columns):
+        m[col] = m[col].map(lambda v: Path(v).name if isinstance(v, str) else v)
+    m.to_csv(dst, index=False)
 
 
 def export_bundle(runs: str | Path, out: str | Path, data: str | Path | None = None,
@@ -54,9 +80,10 @@ def export_bundle(runs: str | Path, out: str | Path, data: str | Path | None = N
         src = Path(c["path"])
         dst = out / src.relative_to(runs)
         (dst / "shapes").mkdir(parents=True, exist_ok=True)
-        for f in ("meta.json", "labels.csv", "attn_distance.npz"):
+        for f in ("labels.csv", "attn_distance.npz"):
             if (src / f).exists():
                 shutil.copy2(src / f, dst / f)
+        _copy_json(src / "meta.json", dst / "meta.json")
         cache = D.load_cache(str(src))
         cols = labels or _labels_to_export(cache)
         for by in cols:
@@ -89,15 +116,15 @@ def export_bundle(runs: str | Path, out: str | Path, data: str | Path | None = N
             if f.exists():
                 rel = f.relative_to(runs)
                 (out / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, out / rel)
+                (_copy_json if f.suffix == ".json" else shutil.copy2)(f, out / rel)
     copy_tree_files(found.attention, {"attention_distance.csv", "attn_distance.npz"})
 
     for d in found.datasets:
         src = Path(d["path"])
         dst = out / "datasets" / d["name"]
         dst.mkdir(parents=True, exist_ok=True)
-        for f in ("dataset.json", "manifest.csv"):
-            shutil.copy2(src / f, dst / f)
+        _copy_json(src / "dataset.json", dst / "dataset.json")
+        _copy_manifest(src / "manifest.csv", dst / "manifest.csv")
         try:
             from .datasets import VideoDataset, write_contact_sheet
             write_contact_sheet(VideoDataset(src), dst / "preview.png", n=6)

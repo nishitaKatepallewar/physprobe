@@ -24,6 +24,22 @@ def test_bundle_round_trip(tmp_path):
     assert len(b.metrics("direction_deg")) == 24
 
 
+def test_bundle_has_no_local_paths(tmp_path):
+    from physprobe.datasets import write_shuffled
+    from physprobe.stimuli import make_manifest  # noqa: F401 - family registry
+    from physprobe.cli import main
+    main(["make", "velocity", "--out", str(tmp_path / "data" / "velocity"), "--grid", "direction_deg=0,180",
+          "speed=2", "--n-starts", "2"])
+    write_shuffled(tmp_path / "data" / "shuffled", tmp_path / "data" / "velocity", block=2)
+    make_demo_cache(tmp_path / "runs" / "demo" / "acts")
+    out = export_bundle(tmp_path / "runs", tmp_path / "bundle", data=tmp_path / "data", progress=lambda *_: None)
+    for f in out.rglob("*"):
+        if f.suffix in (".json", ".csv"):
+            assert str(tmp_path) not in f.read_text(), f
+    shuffled = next(d for d in D.discover(out).datasets if d["name"] == "shuffled")
+    assert shuffled["family"] == "velocity"
+
+
 def test_safe_extract_rejects_traversal(tmp_path):
     z = tmp_path / "bad.zip"
     with zipfile.ZipFile(z, "w") as zf:

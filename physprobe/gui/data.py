@@ -80,7 +80,7 @@ def discover(runs: str | Path, data: str | Path | None = None) -> Found:
             m = json.loads(f.read_text())
             n = sum(1 for _ in open(f.parent / "manifest.csv")) - 1 if (f.parent / "manifest.csv").exists() else 0
             datasets.append({"path": str(f.parent), "name": _rel(f.parent, Path(data)), "type": m.get("type"),
-                             "family": m.get("family", m.get("source", "")), "videos": n,
+                             "family": m.get("family") or Path(str(m.get("source", ""))).name, "videos": n,
                              "targets": m.get("targets", {}),
                              "preview": str(f.parent / "preview.png") if (f.parent / "preview.png").exists() else None})
     return Found(caches, probes, ablations, attention, datasets)
