@@ -1,0 +1,57 @@
+{
+  "model": "SIMULATED (planted structure, not V-JEPA)",
+  "kind": "simulated",
+  "res": 0,
+  "frames": 16,
+  "n": 392,
+  "n_layers": 24,
+  "d_model": 256,
+  "d_mlp": 384,
+  "n_heads": 0,
+  "grid": [
+    8,
+    14,
+    14
+  ],
+  "patch_layers": [],
+  "time_layers": [],
+  "fc1_layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "fc2_layers": [],
+  "attn_edit": null,
+  "dataset": "",
+  "dataset_meta": {
+    "type": "synthetic",
+    "family": "velocity",
+    "targets": {
+      "direction_deg": "circular",
+      "speed": "scalar",
+      "vx,vy": "vector"
+    },
+    "group": "start_id"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "model": "vjepa2-l",
+  "kind": "vjepa2",
+  "res": 224,
+  "frames": 16,
+  "n": 784,
+  "n_layers": 24,
+  "d_model": 1024,
+  "d_mlp": 4096,
+  "n_heads": 16,
+  "grid": [
+    8,
+    14,
+    14
+  ],
+  "patch_layers": [],
+  "time_layers": [],
+  "fc1_layers": [],
+  "fc2_layers": [],
+  "attn_edit": null,
+  "dataset": "data/shuffled_pairs",
+  "dataset_meta": {
+    "type": "shuffled",
+    "source": "/home/nishita-katepallewar/work/projects/physprobe/data/velocity",
+    "frames": 16,
+    "block": 2,
+    "targets": {
+      "shuffled": "binary"
+    },
+    "group": "source_id"
+  }
+}
