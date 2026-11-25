@@ -124,9 +124,18 @@ def _norm_layer(S):
     return S / max(r, 1e-12)
 
 
+def _pad_axes(X, k=2):
+    """Append zero columns so X has at least k axes. A variable with two values has a
+    single axis of variation; its points are drawn along that axis at zero height."""
+    if X is None or X.shape[1] >= k:
+        return X
+    return np.hstack([X, np.zeros((X.shape[0], k - X.shape[1]), dtype=X.dtype)])
+
+
 def manifold_frame(scores, levels, circular, dims=3, videos=None, video_levels=None, label=""):
     """Traces for one layer: optional faint videos, the path through condition means
     (closed for circular variables), and the labelled means."""
+    scores, videos = _pad_axes(scores), _pad_axes(videos)
     order = np.argsort(levels.astype(float)) if np.issubdtype(levels.dtype, np.number) else np.arange(len(levels))
     path = _closed(order, circular)
     cols = level_colors(levels, circular) if np.issubdtype(levels.dtype, np.number) else \
@@ -165,7 +174,12 @@ def manifold_frame(scores, levels, circular, dims=3, videos=None, video_levels=N
 
 
 def _scene_layout(fig, dims, lim, var=None):
-    t = (lambda i: f"PC{i + 1}" + (f" ({100 * var[i]:.0f}%)" if var is not None and i < len(var) else ""))
+    def t(i):
+        if var is None:
+            return f"PC{i + 1}"
+        if i >= len(var):
+            return ""  # padding axis: the variable has fewer axes of variation than shown
+        return f"PC{i + 1} ({100 * var[i]:.0f}%)"
     if dims == 3:
         ax = dict(range=[-lim, lim], gridcolor=GRID, zerolinecolor=AXIS, backgroundcolor=SURFACE,
                   showspikes=False, tickfont=dict(size=10, color=MUTED))
