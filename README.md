@@ -66,7 +66,7 @@ when a script is run again. Each script ends with `runs/<model>/report.html`.
 
 | Paper | Command | Main output | Reported in the paper (as read from the text) |
 |---|---|---|---|
-| Fig. 1, possible vs impossible | `probe` on IntPhys or `permanence` | `layer_curves.png` | chance early, ~85–95% at about one-third depth, peak mid-network, decline toward the output |
+| Fig. 1, possible vs impossible | `probe --paired scene` on IntPhys or `permanence` | `layer_curves.png`, `probe_summary.csv` | chance early, ~85–95% at about one-third depth, peak mid-network, decline toward the output |
 | Fig. 2, speed, acceleration, direction | `probe` on `velocity`, `acceleration` | `layer_curves.png` | magnitudes early; direction from the transition (layer ~8 of 24) |
 | Sec. 6.1, shuffled videos | `make-shuffled --block 2`, `probe` | `layer_curves.png` | emergence similar to IntPhys |
 | Fig. 3, attention distance | `extract --attn-stats`, `attn` | `attention_distance.png` | local heads at the transition |
@@ -103,6 +103,9 @@ Each is a command-line flag or a few lines of code.
 - **Cross-validation groups.** Start position for the synthetic sets, matched scene for IntPhys
   and `permanence` (`--group`).
 - **IntPhys frames.** 16 frames spread uniformly over each clip (`--frames`, `--sampling`).
+- **IntPhys scoring.** The paper does not say how accuracy is scored. `probe` reports per-video
+  accuracy; `--paired scene` adds matched-set accuracy (each impossible video compared with the
+  possible videos of its scene), which is what reproduces the paper's numbers here.
 - **Attention ablation.** Attention to keys within patch distance *s* and/or tubelet distance
   *t* is masked before the softmax at layers L/3−1 and L/3 (`--layers`), all heads. "Combined"
   removes keys near in space *or* time (`--combine or`, the default); with *and* it would remove a
