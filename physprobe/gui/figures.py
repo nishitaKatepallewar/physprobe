@@ -165,7 +165,7 @@ def manifold_frame(scores, levels, circular, dims=3, videos=None, video_levels=N
 
 
 def _scene_layout(fig, dims, lim, var=None):
-    t = (lambda i: f"PC{i + 1}" + (f" ({100 * var[i]:.0f}%)" if var is not None else ""))
+    t = (lambda i: f"PC{i + 1}" + (f" ({100 * var[i]:.0f}%)" if var is not None and i < len(var) else ""))
     if dims == 3:
         ax = dict(range=[-lim, lim], gridcolor=GRID, zerolinecolor=AXIS, backgroundcolor=SURFACE,
                   showspikes=False, tickfont=dict(size=10, color=MUTED))
@@ -185,6 +185,7 @@ def manifold_view(traj, layer, circular, dims=3, normalise=True, show_videos=Fal
         S = S / max(r, 1e-12)
         V = V / max(r, 1e-12) if V is not None else None
     lim = 1.25 * (np.abs(S).max() if V is None else np.percentile(np.abs(V), 99))
+    dims = min(dims, S.shape[1])  # a variable with 3 values has only 2 axes of variation
     fig = go.Figure(manifold_frame(S, traj["levels"], circular, dims, V, traj["video_levels"], label))
     _scene_layout(fig, dims, lim, traj["var"][layer])
     return _base(fig, 560, legend=False)
@@ -193,6 +194,7 @@ def manifold_view(traj, layer, circular, dims=3, normalise=True, show_videos=Fal
 def manifold_animation(traj, circular, dims=3, label=""):
     """All layers as animation frames, with a play button and a layer slider."""
     L = traj["scores"].shape[0]
+    dims = min(dims, traj["scores"].shape[2])
     frames = []
     for l in range(L):
         S = _norm_layer(traj["scores"][l])

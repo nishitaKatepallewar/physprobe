@@ -32,3 +32,13 @@ def test_figures_build(tmp_path):
     assert F.filmstrip(tr, True, current=8).data
     s = D.quick_probe(c, ["direction_deg:circular", "speed:scalar"])
     assert F.probe_curves({"demo": s}, ["direction_deg", "speed"], 8) is not None
+
+
+def test_shape_views_with_three_levels():
+    """A variable with three values has only two principal axes; 3-D views fall back to 2-D."""
+    from physprobe.gui import figures as F
+    L = 4
+    traj = {"scores": np.random.default_rng(0).normal(size=(L, 3, 2)), "var": np.full((L, 2), 0.5),
+            "levels": np.array([2.0, 4.0, 6.0]), "videos": None, "video_levels": None}
+    F.manifold_view(traj, 1, False, dims=3)
+    F.manifold_animation(traj, False, dims=3)
