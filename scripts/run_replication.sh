@@ -44,9 +44,11 @@ for d in acceleration shuffled_pairs $VOE; do
 done
 
 echo "== 3. layerwise probes (Fig. 1, Fig. 2, Sec. 6.1 shuffled control)"
-for d in velocity acceleration shuffled_pairs $VOE; do
+for d in velocity acceleration shuffled_pairs; do
   $PY probe --acts $OUT/$d/acts --out $OUT/$d/probe $PROBE
 done
+# matched possible/impossible sets: also score within each scene (relative accuracy)
+$PY probe --acts $OUT/$VOE/acts --out $OUT/$VOE/probe $PROBE --paired scene
 
 echo "== 4. subspaces: orthogonal probe sequences + overlap (App. C.11, C.4, Table 3)"
 $PY subspace --out $OUT/subspace --layers $SUBL \
