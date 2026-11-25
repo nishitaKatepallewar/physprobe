@@ -231,29 +231,58 @@ def resolve_groups(labels: pd.DataFrame, group_col: str | None) -> np.ndarray:
     return np.arange(len(labels))
 
 
-def cv_probe(X, target: Target, groups, n_splits=5, **fit_kw) -> pd.DataFrame:
-    """Grouped K-fold probe of one feature matrix. One row per fold."""
+def paired_accuracy(scores, y, sets) -> float:
+    """Matched-set accuracy for a binary probe: within each set (e.g. an IntPhys scene with
+    two possible and two impossible videos), the fraction of (positive, negative) pairs in
+    which the positive video gets the higher probe score; ties count one half. Scene
+    appearance is shared within a set, so it cancels; this is the relative scoring
+    customary for violation-of-expectation benchmarks."""
+    wins = n = 0.0
+    for s in np.unique(sets):
+        m = sets == s
+        pos, neg = scores[m][y[m] > 0.5], scores[m][y[m] <= 0.5]
+        if len(pos) and len(neg):
+            d = pos[:, None] - neg[None, :]
+            wins += (d > 0).sum() + 0.5 * (d == 0).sum()
+            n += d.size
+    return float(wins / n) if n else float("nan")
+
+
+def _paired(target: Target, te, pred, pairs) -> dict:
+    if pairs is None or target.kind != "binary":
+        return {}
+    return {"paired_accuracy": paired_accuracy(pred[:, 0], target.Y[te, 0], pairs[te])}
+
+
+def cv_probe(X, target: Target, groups, n_splits=5, pairs=None, **fit_kw) -> pd.DataFrame:
+    """Grouped K-fold probe of one feature matrix. One row per fold. With `pairs` (one
+    matched-set id per video) binary probes also report paired_accuracy; keep the sets
+    inside the CV groups so that every set is scored by a probe that never saw it."""
     strat = target.Y[:, 0] if target.kind == "binary" else None
     rows = []
     for f, (tr, te) in enumerate(make_folds(groups, strat, n_splits)):
         pred, info, _ = fit_predict(X[tr], target, tr, X[te], groups[tr], **fit_kw)
-        rows.append({"fold": f, **score(target, te, pred), **info})
+        rows.append({"fold": f, **score(target, te, pred), **_paired(target, te, pred, pairs), **info})
     return pd.DataFrame(rows)
 
 
-def holdout_probe(X, target: Target, groups, test_mask, **fit_kw) -> pd.DataFrame:
+def holdout_probe(X, target: Target, groups, test_mask, pairs=None, **fit_kw) -> pd.DataFrame:
     """Train on ~test_mask, test on test_mask (e.g. generalise to unseen speeds)."""
     tr, te = np.where(~test_mask)[0], np.where(test_mask)[0]
     pred, info, _ = fit_predict(X[tr], target, tr, X[te], groups[tr], **fit_kw)
-    return pd.DataFrame([{"fold": 0, **score(target, te, pred), **info}])
+    return pd.DataFrame([{"fold": 0, **score(target, te, pred), **_paired(target, te, pred, pairs), **info}])
 
 
 def layerwise(cache, targets: list[Target], group_col=None, layers=None, test_mask=None,
-              row_mask=None, progress=True, **fit_kw) -> pd.DataFrame:
+              row_mask=None, progress=True, paired_col=None, **fit_kw) -> pd.DataFrame:
     """Probe every layer of an activation cache. Long-format result:
-    columns layer, target, kind, fold, <metrics>."""
+    columns layer, target, kind, fold, <metrics>. `paired_col` names the label column
+    that identifies matched sets (adds paired_accuracy for binary targets)."""
     labels = cache.labels
     groups = resolve_groups(labels, group_col or cache.group)
+    if paired_col is not None and paired_col not in labels.columns:
+        raise KeyError(f"--paired: no label column {paired_col!r} (have {list(labels.columns)})")
+    pairs = None if paired_col is None else pd.factorize(labels[paired_col])[0]
     keep = np.ones(len(labels), bool) if row_mask is None else np.asarray(row_mask)
     layers = list(range(cache.n_layers)) if layers is None else list(layers)
     it = layers
@@ -265,10 +294,11 @@ def layerwise(cache, targets: list[Target], group_col=None, layers=None, test_ma
         X = cache.layer(l)[keep]
         for t in targets:
             tk = Target(t.name, t.kind, t.Y[keep], None if t.angle is None else t.angle[keep])
+            pk = None if pairs is None else pairs[keep]
             if test_mask is not None:
-                df = holdout_probe(X, tk, groups[keep], np.asarray(test_mask)[keep], **fit_kw)
+                df = holdout_probe(X, tk, groups[keep], np.asarray(test_mask)[keep], pk, **fit_kw)
             else:
-                df = cv_probe(X, tk, groups[keep], **fit_kw)
+                df = cv_probe(X, tk, groups[keep], pairs=pk, **fit_kw)
             df.insert(0, "kind", t.kind)
             df.insert(0, "target", t.name)
             df.insert(0, "layer", l)
@@ -278,7 +308,7 @@ def layerwise(cache, targets: list[Target], group_col=None, layers=None, test_ma
 
 def summarize(df: pd.DataFrame) -> pd.DataFrame:
     """Mean and SD across folds for every (layer, target)."""
-    metrics = [c for c in ("r2", "circ_mae_deg", "accuracy") if c in df.columns]
+    metrics = [c for c in ("r2", "circ_mae_deg", "accuracy", "paired_accuracy") if c in df.columns]
     g = df.groupby(["target", "kind", "layer"])[metrics].agg(["mean", "std"])
     g.columns = [f"{m}_{s}" for m, s in g.columns]
     return g.reset_index()
