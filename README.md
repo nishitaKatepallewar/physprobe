@@ -14,7 +14,8 @@ Components:
   orbiting and occluded balls; colour, size and position sweeps; two-object scenes) plus
   loaders for IntPhys and for arbitrary labelled videos.
 - **Model access**: V-JEPA 2 (L/H/G) and VideoMAE wrappers with hooks on the residual stream,
-  MLP units and attention; attention ablations; residual-stream interventions.
+  MLP units and attention; attention ablations; residual-stream interventions. Results are
+  reported only for V-JEPA 2-L.
 - **Analyses**: layerwise linear and attentive probes, orthogonal probe sequences, subspace
   angles, rank-k erasure, steering, unit tuning, per-patch probes, attention distance, and
   manifold statistics (split-half reliability, noise-corrected dimensionality, harmonic
@@ -72,7 +73,7 @@ when a script is run again. Each script ends with `runs/<model>/report.html`.
 | Table 2, attention ablation | `ablate` | `ablation_table.csv` | direction R² 0.97 base; 0.93 spatial s=7; 0.83 temporal t=3; 0.14 combined |
 | App. C.11, orthogonal probes | `subspace` | `dimension_by_layer.csv` | direction 14–136 dimensions; IntPhys 1–15 |
 | Table 3, subspace overlap | `subspace` | `subspace_by_layer.csv` | direction vs IntPhys ~69–75°; speed vs IntPhys ~80–83° |
-| Fig. 4, tuned units | `tuning` | `direction_tiling_fc1.png` | direction-tuned MLP units tile 360° |
+| Fig. 4, tuned units | `tuning` | `direction_tiling_fc1.png` | direction-tuned MLP units tile 360°; organisation absent in early layers, emerging at the transition |
 | Sec. 7.2, steering | `steer` | `steering_L8.png` | 82.9° without steering; 11.9° with 20 probes; one probe insufficient |
 | App. C.5, per-patch probes | `extract --patch-layers`, `patch` | `patch_r2_L*.png` | direction decodable across patches after the transition |
 
@@ -83,10 +84,11 @@ the predictor-based violation-of-expectation analysis.
 
 Each is a command-line flag or a few lines of code.
 
-- **Rendering.** The paper uses Kubric/Blender. With zero friction and an overhead camera the
-  motion is closed-form, so a flat-shaded orthographic renderer with the paper's geometry is used
-  (8 m floor, 0.3 m ball, 24 fps, 16 frames, speeds 1–7 m/s, starts in [−2, 2]² m).
-  Trajectories match the description; images do not. `--view-m` sets the visible width.
+- **Rendering.** The paper uses Kubric/Blender with a perspective camera 10 m above the floor,
+  rendered at 256 × 256. With zero friction and an overhead camera the motion is closed-form, so a
+  flat-shaded orthographic renderer with the paper's geometry is used here (8 m floor, ball radius
+  0.3 m, 24 fps, 16 frames, speeds 1–7 m/s, starts in [−2, 2]² m). Trajectories match the
+  description; images do not (no perspective, simpler shading). `--view-m` sets the visible width.
 - **Resolution.** 224 × 224 as stated in the paper (14 × 14 patches, 1568 tokens); the released
   checkpoints were trained at 256. The Hugging Face module derives rotary position ids from the
   checkpoint's 256 grid, which misplaces patches at other sizes; the wrapper resets the grid to
