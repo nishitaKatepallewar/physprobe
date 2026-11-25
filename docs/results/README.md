@@ -26,6 +26,7 @@ Two kinds of file:
 | `velocity_patch_probe.csv` | per-patch direction probes |
 | `velocity_steering_L8.json` | steering at layer 8, strict protocol (one run of the probe sequence) |
 | `intphys_probe.csv`, `intphys_O1_probe.csv` | IntPhys dev set, all blocks / object permanence only, per-video accuracy (AdamW probes) |
+| `intphys_probe_paired.csv` | IntPhys dev set, all blocks, `probe --paired scene` (AdamW probes): per-video and paired accuracy |
 | `intphys_subspace_overlap.csv`, `intphys_dimension_by_layer.csv` | `subspace` with direction and speed from `velocity` and possible vs impossible from IntPhys |
 | `velocity_256px_probe.csv` | `velocity` at 256 × 256 input (ridge probes) |
 
