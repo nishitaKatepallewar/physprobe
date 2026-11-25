@@ -239,6 +239,35 @@ def fig_shape():
     save(fig, "fig7_direction_shape.png")
 
 
+def fig_intphys():
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 3.9))
+    ax = axes[0]
+    d = pd.read_csv(RES / "intphys_probe.csv").sort_values("layer")
+    c = pd.read_csv(RES / "intphys_scoring_check.csv")
+    ax.fill_between(d.layer, d.accuracy_mean - d.accuracy_std, d.accuracy_mean + d.accuracy_std,
+                    color=CAT[1], alpha=0.15, lw=0)
+    line(ax, d.layer, d.accuracy_mean, CAT[1], "each video alone (AdamW sweep)")
+    line(ax, c.layer, c.paired, CAT[0], "within matched scenes (paired)")
+    ax.plot([PEZ, PEZ], [0.85, 0.95], color=INK, lw=5, solid_capstyle="butt", alpha=0.35,
+            label="paper: 85–95% at one-third depth")
+    ax.axhline(0.5, color=AXIS, lw=1)
+    finish(ax, "possible vs impossible, accuracy", (0.4, 1.0))
+    ax.set_title("IntPhys dev set (360 videos, all blocks)")
+    ax.legend(loc="lower right")
+    ax = axes[1]
+    v = pd.read_csv(RES / "velocity_direction_L0_by_speed.csv")
+    line(ax, v.pixels_per_frame_224, v.r2_pretrained, CAT[0], "pretrained")
+    line(ax, v.pixels_per_frame_224, v.r2_random, CAT[0], "random weights", ls=(0, (4, 2)))
+    ax.set_xlabel("ball displacement per frame (pixels, 224 px input)")
+    ax.set_ylabel("direction R², layer 0")
+    ax.set_ylim(0, 1.03)
+    ax.set_title("Layer-0 direction at each speed (56 videos per speed)")
+    ax.legend(loc="lower center")
+    fig.text(0.01, -0.03, "Left: shaded band = fold SD. Paired = for each IntPhys scene, share of (possible, impossible) "
+             "pairs in which the possible video scores higher (logistic probe, C = 0.01).", fontsize=8, color=MUTED)
+    save(fig, "fig8_intphys_and_speed.png")
+
+
 if __name__ == "__main__":
     fig_shortcut()
     fig_shuffle()
@@ -247,3 +276,4 @@ if __name__ == "__main__":
     fig_dimensions()
     fig_steering()
     fig_shape()
+    fig_intphys()

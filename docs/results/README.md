@@ -25,6 +25,9 @@ Two kinds of file:
 | `velocity_manifold_direction.csv` | direction manifold statistics, `velocity` |
 | `velocity_patch_probe.csv` | per-patch direction probes |
 | `velocity_steering_L8.json` | steering at layer 8, strict protocol (one run of the probe sequence) |
+| `intphys_probe.csv`, `intphys_O1_probe.csv` | IntPhys dev set, all blocks / object permanence only, per-video accuracy (AdamW probes) |
+| `intphys_subspace_overlap.csv`, `intphys_dimension_by_layer.csv` | `subspace` with direction and speed from `velocity` and possible vs impossible from IntPhys |
+| `velocity_256px_probe.csv` | `velocity` at 256 × 256 input (ridge probes) |
 
 **Transcribed** from the printed output of later runs, at the precision printed (2–3 decimals):
 
@@ -38,6 +41,8 @@ Two kinds of file:
 | `steering_curves.csv` | `steer --strict` on `velocity` (layer 8) and `velocity_stepped` (layer 10) |
 | `velocity_steering_propagation_L8.csv` | `steer --strict --propagate`, 64 random held-out videos |
 | `ablation_readouts.csv` | `ablate` read-out tables: `velocity` layers 1–4; `velocity_stepped` layers 7–8 and 4–6 |
+| `intphys_scoring_check.csv` | IntPhys, logistic probe (C = 0.01), grouped 5-fold: per-video accuracy, accuracy with random folds that split matched scenes, and paired accuracy within matched scenes |
+| `velocity_direction_L0_by_speed.csv` | `probe --where "speed == s"` on `velocity`, ridge, layer 0, pretrained and random weights (56 videos per speed); pixels per frame = speed / 24 fps × 28 px/m |
 
 Probe solvers: "ridge" is closed-form ridge regression with the penalty chosen on a grouped
 validation split; "AdamW" is the paper's 20-configuration sweep. Both use grouped 5-fold

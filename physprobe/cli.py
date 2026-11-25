@@ -152,7 +152,8 @@ def _probe_cache(cache, a, layer_spec=None):
     tg = probes.parse_targets(a.target, cache.labels, cache.targets)
     row, test = _masks(cache.labels, getattr(a, "where", None), getattr(a, "holdout", None))
     layers = parse_layers(layer_spec, cache.n_layers) if layer_spec else None
-    df = probes.layerwise(cache, tg, a.group, layers, test, row, **_fit_kw(a))
+    df = probes.layerwise(cache, tg, a.group, layers, test, row,
+                          paired_col=getattr(a, "paired", None), **_fit_kw(a))
     return df, probes.summarize(df)
 
 
@@ -180,6 +181,11 @@ def cmd_probe(a):
         vals = "  ".join(f"L{l}={g[g.layer == l][col].iloc[0]:.2f}" for l in pick if (g.layer == l).any())
         print(f"  {tgt:16s} {col[:-5]:8s} {vals}   peak L{int(best.layer)}={best[col]:.2f}   "
               + (f"half-way-to-peak at L{em}" if em is not None else "never decodable"))
+        if "paired_accuracy_mean" in g and g["paired_accuracy_mean"].notna().any():
+            pc = "paired_accuracy_mean"
+            pb = g.loc[g[pc].idxmax()]
+            pv = "  ".join(f"L{l}={g[g.layer == l][pc].iloc[0]:.2f}" for l in pick if (g.layer == l).any())
+            print(f"  {'':16s} {'paired':8s} {pv}   peak L{int(pb.layer)}={pb[pc]:.2f}")
     print(f"-> {out}/layer_curves.png, probe_summary.csv")
 
 
@@ -788,6 +794,9 @@ def main(argv=None):
                    help="pandas expression: test on these rows, train on the rest (e.g. 'speed>=6')")
     p.add_argument("--compare", nargs="*", default=[], metavar="LABEL=PROBE_DIR",
                    help="overlay other probe runs (e.g. random=runs/vel_random/probe)")
+    p.add_argument("--paired", default=None, metavar="COLUMN",
+                   help="label column of matched sets (IntPhys, permanence: scene); binary targets "
+                        "then also report paired accuracy within each set")
     _add_probe_args(p)
     p.set_defaults(fn=cmd_probe)
 
