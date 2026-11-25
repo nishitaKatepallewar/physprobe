@@ -17,8 +17,10 @@ here, not errors in the paper.
    (R² 0.83), and nearly as well from a randomly initialised network (R² 0.81–0.86). V-JEPA 2
    encodes each pair of frames as one token (tubelet size 2), so motion is visible inside single
    tokens. With these stimuli the paper's emergence of direction at about one-third depth
-   is not observed; pretraining instead raises decoding from about 0.8 to 0.99. Why the
-   paper's videos behave differently is not established here (see Limitations).
+   is not observed; pretraining instead raises decoding from about 0.8 to 0.99. The early signal
+   is present at every speed tested, down to about one pixel of movement per frame, and at the
+   checkpoint's native 256 × 256 input (R² 0.87 at layer 0). Why the paper's videos behave
+   differently is not established here (see Limitations).
 2. **When motion is removed from inside tokens** (the ball is static within each frame pair and
    moves between pairs), **a pattern like the paper's appears**: direction is at R² ≈ 0 at layers
    0–3 and reaches 0.91 at layer 8 (not monotonically: 0.32 at layer 4, 0.17 at layer 5), speed
@@ -51,6 +53,13 @@ here, not errors in the paper.
    harmonic (opposite directions represented alike, up to 55% of the variance by layer 23). A
    weak four-fold pattern at layers 3–4 appears in one computation of the statistics but not in
    another (see Results 5), so it is not treated as a finding.
+8. **On the IntPhys dev set, the paper's possible-vs-impossible emergence appears when each
+   impossible video is compared with the possible videos of its own scene** (paired scoring,
+   with the paper's 20-configuration probe sweep): 0.54 at layer 0, 0.74–0.85 at layers 5–8,
+   0.91 at layers 11–12, 0.88 at layer 23. Judged one video at a time, the same probes reach
+   0.58 at layer 8 and 0.68 at best. The paper does not state how its accuracy is scored, so the
+   match depends on that inference. The decline toward the output that the paper reports is not
+   seen.
 
 All results come from single runs (one seed, one cross-validation split per fold).
 
@@ -66,11 +75,12 @@ All results come from single runs (one seed, one cross-validation split per fold
 | Combined local-attention ablation removes direction (0.97 → 0.14) | largest drop 0.94 → 0.58, at layers 4–6 on stepped videos; no effect on ordinary videos | partly: an effect on stepped videos, much smaller, earlier |
 | Direction needs many orthogonal probe dimensions | 18–92 by that method; erasing 2 directions removes linear decodability | method-dependent |
 | One probe cannot steer direction; ~20 can (82.9° → 11.9°) | 1 probe: 82–86°; 10–20 probes: 4–6° | reproduced |
-| Direction and violation-of-expectation subspaces are near-orthogonal (69–75°) | 63–75° across the layers tested, against 73–76° for random subspaces of the same sizes; uses this repository's `permanence` set, not IntPhys | not distinguishable from random subspaces here; different dataset |
-| Violation-of-expectation accuracy peaks mid-network and declines toward the output | `permanence` set: rises to 0.98–1.00 at layers 18–23, no decline | not tested (IntPhys not run; the stand-in is likely easier) |
+| Direction and violation-of-expectation subspaces are near-orthogonal (69–75°) | IntPhys: 73–74° against 75–76° for random subspaces of the same sizes; `permanence`: 63–75° against 73–76° | not distinguishable from random subspaces; the IntPhys probe inside this analysis scores only 0.53–0.56 |
+| IntPhys possible vs impossible: chance early, about 85–95% at about one-third depth | paired: 0.54 at layer 0, 0.82 at layer 8, 0.91 at layers 11–12; per video: 0.52, 0.58, 0.65 | reproduced with paired scoring; not per video. The paper's scoring is not stated |
+| ... peaking mid-network and declining toward the output | paired: 0.85–0.91 from layer 10 to 23 | decline not reproduced |
 
-Not tested: IntPhys itself, V-JEPA 2-H and -g, VideoMAE-v2, the CLEVRER / ImageNet /
-Something-Something-v2 controls, and the predictor-based analyses.
+Not tested: V-JEPA 2-H and -g, VideoMAE-v2, the CLEVRER / ImageNet / Something-Something-v2
+controls, attentive probes on IntPhys, and the predictor-based analyses.
 
 ## Methods in brief
 
@@ -85,10 +95,15 @@ Something-Something-v2 controls, and the predictor-based analyses.
   - `shuffled_pairs`: each `velocity` video intact and with its 8 tubelets in random order.
   - `permanence`: a ball passes behind a panel and continues, vanishes, jumps sideways or grows
     (matched pairs; 240 videos). A stand-in for IntPhys.
+  - IntPhys dev set (Riochet et al.): 3 blocks × 30 scenes × 4 videos (2 possible, 2 impossible)
+    = 360 videos, 16 frames spread uniformly over each ~100-frame clip.
 - **Activations**: residual stream after each of the 24 blocks, mean-pooled over 1568 tokens.
 - **Probes**: linear, grouped 5-fold cross-validation (groups: start position or matched scene);
   directions regressed as (sin θ, cos θ). Ridge (penalty chosen on a grouped validation split) or
   the paper's 20-configuration AdamW sweep; the table README lists which run used which.
+  For matched possible/impossible sets, `probe --paired scene` also reports paired accuracy:
+  within each scene, the share of (possible, impossible) pairs in which the possible video gets
+  the higher probe score, using probes that never saw that scene.
 - **Ablations**: attention logits from each query to keys within the given spatial (patches) or
   temporal (tubelets) distance are masked before the softmax at the stated layers, all heads.
   "Combined s = 3, t = 1" removes keys within 3 patches *or* within 1 tubelet; under *and* it
@@ -123,6 +138,20 @@ It is present without training, so it is available in the input itself. It disap
 nothing moves inside a tubelet. On stepped videos, speed reaches 0.52 at layer 1 and 0.86 at
 layer 2, well before direction (0.32 at layer 4, 0.17 at layer 5, 0.60 at layer 6, 0.91 at
 layer 8); the ordering of the two variables matches the paper.
+
+Three checks on the renders themselves:
+
+| Check (`velocity`, direction R² at layer 0) | pretrained | random weights |
+|---|---|---|
+| 1 m/s: about 1.2 px of movement per frame | 0.59 | 0.85 |
+| 2–6 m/s: 2–7 px per frame | 0.80–0.88 | 0.95–0.98 |
+| 7 m/s: about 8 px per frame (half a patch) | 0.65 | 0.87 |
+| 256 × 256 input, all speeds | 0.87 (0.94 at layer 1) | – |
+
+The camera already shows the whole 8 m floor, so the ball moves as few pixels per frame as this
+scene allows. About one pixel between the two frames of a tubelet is enough, and the untrained
+network reads it better than the trained one. Each speed has only 56 videos, so single values
+are noisy; the dips at 1 and 7 m/s are not interpreted. Right panel of the figure in section 6.
 
 ### 2. Temporal order and local attention
 
@@ -220,19 +249,45 @@ On ordinary videos the direction ring is already ordered at layer 4 (ring order 
 flattened (circularity 0.37), becomes round at layers 8–16 (circularity 0.87–0.94) and develops a
 second harmonic toward the output (0.45 at layer 23).
 
+### 6. IntPhys
+
+![IntPhys and layer-0 direction by speed](docs/figures/fig8_intphys_and_speed.png)
+
+| Possible vs impossible accuracy | layer 0 | 4 | 6 | 8 | 12 | 16 | 23 |
+|---|---|---|---|---|---|---|---|
+| per video, all blocks | 0.52 | 0.55 | 0.58 | 0.58 | 0.65 | 0.68 | 0.64 |
+| per video, object permanence block only | 0.52 | 0.57 | 0.58 | 0.62 | 0.64 | 0.72 | 0.68 |
+| paired, all blocks | 0.54 | 0.61 | 0.78 | 0.82 | 0.91 | 0.89 | 0.88 |
+| random folds that split matched scenes (logistic probe) | 0.25 | 0.28 | 0.31 | 0.32 | 0.44 | 0.55 | 0.53 |
+
+AdamW sweep and grouped 5-fold cross-validation (all four videos of a scene in one fold) unless
+stated. The labels are balanced: 60 possible and 60 impossible videos per block, and every scene
+has two of each. Judged one video at a time, the probe must recognise an impossible event in a
+scene it has never seen, and differences between scenes dominate. Paired scoring compares each
+impossible video with the possible videos of the same scene, so scene appearance cancels. The
+sharpest rise is at layers 4–7 (0.61 → 0.85), next to the layers where tubelet-order detection
+jumps (section 2); fold-to-fold variation is largest there (SD 0.06–0.10). Splitting matched
+scenes across folds pushes accuracy below chance, because a video's near-identical twin with the
+opposite label is then in the training set; leakage of that kind does not explain the paper's
+higher numbers. A logistic probe with fixed regularisation gives the same paired curve within 0.03 from layer 8
+on and within 0.06 at layers 5–7 (`docs/results/intphys_scoring_check.csv`).
+
 ## Limitations and open questions
 
 - **Stepped videos are out of distribution.** Natural video never freezes for two frames, so the
   late emergence on stepped videos may partly reflect unfamiliar motion rather than the model's
-  normal computation. A natural manipulation (slow speeds or motion blur, which shrink
-  within-token displacement without making motion jerky) has not been run.
+  normal computation. Slow speeds, which shrink within-token displacement without making motion
+  jerky, leave direction decodable at layer 0 (R² 0.59 at about 1 px per frame); motion blur has
+  not been tried.
 - **The main disagreement is unexplained.** Any continuously moving ball, including the paper's,
   moves within each two-frame tubelet, so within-token motion is presumably present in the
   paper's videos too. Why it does not make direction decodable early there is not known.
   Candidate differences: rendering (the paper uses Kubric/Blender with a perspective camera 10 m
-  above the floor, rendered at 256 × 256; here a flat-shaded orthographic renderer), the ball's
-  size and displacement in pixels, preprocessing, probe details, or an error in this repository.
-  Running IntPhys and rendering a few scenes with Kubric would narrow this down.
+  above the floor, rendered at 256 × 256; here a flat-shaded orthographic renderer),
+  preprocessing, probe details, or an error in this repository. Two candidates are now less
+  likely: the early signal does not depend on speed or input resolution here, and the same
+  pipeline reproduces the paper's IntPhys emergence on the paper's own videos (with paired
+  scoring). Rendering a few scenes with Kubric would test the renderer directly.
 - **Single runs.** No repeated seeds or resampled splits. Fold standard deviations are in the
   copied tables (typically 0.003–0.06).
 - **Some numbers are transcribed by hand** from printed command output rather than copied from
@@ -242,9 +297,10 @@ second harmonic toward the output (0.45 at layer 23).
   coding assistant. The self-test checks the analyses on planted structure, but the pipeline has
   not been reviewed by anyone else.
 - **Settings not specified in the paper**, chosen here: resolution 224 (the checkpoint was
-  trained at 256), frame sampling, cross-validation groups, probe epochs, the meaning of
+  trained at 256), frame sampling (for IntPhys, 16 frames spread over each ~100-frame clip, which
+  can thin out the single frame where a possible and an impossible video first differ),
+  cross-validation groups, how IntPhys accuracy is scored, probe epochs, the meaning of
   "combined", which layers are read out after ablation, and which heads are ablated (all).
-- **Violation of expectation** was measured on a stand-in dataset, not IntPhys.
 - One model size.
 
 ## Reproducing
