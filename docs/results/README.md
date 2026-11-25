@@ -11,8 +11,8 @@ Two kinds of file:
 
 | File | Run |
 |---|---|
-| `velocity_probe.csv`, `velocity_probe_random.csv` | `velocity` set: pretrained weights (ridge probes) / random weights (AdamW probes) |
-| `velocity_centered_probe.csv`, `velocity_centered_probe_random.csv` | `velocity_centered`, pretrained / random weights (AdamW probes) |
+| `velocity_probe.csv`, `velocity_probe_random.csv` | `velocity` set: pretrained weights (ridge probes) / random weights (produced by `run_controls.sh`, which uses ridge; the solver is not stored in the file) |
+| `velocity_centered_probe.csv`, `velocity_centered_probe_random.csv` | `velocity_centered`, pretrained / random weights (produced by `run_controls.sh`, which uses ridge; the solver is not stored in the file) |
 | `acceleration_probe.csv`, `permanence_probe.csv` | paper protocol |
 | `shuffled_frames_probe.csv` | intact vs single-frame-shuffled videos |
 | `shuffled_pairs_probe.csv` | intact vs tubelet-pair-shuffled videos (AdamW probes) |
