@@ -118,6 +118,13 @@ def export_bundle(runs: str | Path, out: str | Path, data: str | Path | None = N
                 (out / rel).parent.mkdir(parents=True, exist_ok=True)
                 (_copy_json if f.suffix == ".json" else shutil.copy2)(f, out / rel)
     copy_tree_files(found.attention, {"attention_distance.csv", "attn_distance.npz"})
+    for e in found.steering:  # disturb runs: summary, per-video rows, figures
+        src = Path(e["path"])
+        for f in [src / "disturb_summary.csv", *src.glob("disturb_L*.csv"), *src.glob("disturb_L*_x*.png")]:
+            if f.exists():
+                rel = f.relative_to(runs)
+                (out / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, out / rel)
 
     for d in found.datasets:
         src = Path(d["path"])
@@ -134,7 +141,8 @@ def export_bundle(runs: str | Path, out: str | Path, data: str | Path | None = N
     (out / "bundle.json").write_text(json.dumps({
         "format": FORMAT, "version": VERSION, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
         "source": runs.name, "activation_sets": sum(not c["missing"] for c in found.caches),
-        "shapes": n_shapes, "probe_runs": len(found.probes), "ablation_runs": len(found.ablations)}, indent=2))
+        "shapes": n_shapes, "probe_runs": len(found.probes), "ablation_runs": len(found.ablations),
+        "steering_runs": len(found.steering)}, indent=2))
     if zip_it:
         z = out.with_suffix(".zip")
         with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:

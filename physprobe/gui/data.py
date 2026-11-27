@@ -11,7 +11,8 @@ A "data" folder is searched for datasets (folders with dataset.json).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,7 @@ class Found:
     ablations: list
     attention: list
     datasets: list
+    steering: list = field(default_factory=list)
 
 
 def _rel(p: Path, root: Path) -> str:
@@ -46,7 +48,7 @@ def discover(runs: str | Path, data: str | Path | None = None) -> Found:
     (precomputed shapes from `physprobe export`) or "missing" (neither: results only).
     """
     runs = Path(runs)
-    caches, probes, ablations, attention, datasets = [], [], [], [], []
+    caches, probes, ablations, attention, datasets, steering = [], [], [], [], [], []
     if data is None and (runs / "bundle.json").exists():
         data = runs / "datasets"  # bundles carry their dataset previews
     if runs.exists():
@@ -67,6 +69,8 @@ def discover(runs: str | Path, data: str | Path | None = None) -> Found:
             probes.append({"path": str(f.parent), "name": _rel(f.parent, runs)})
         for f in sorted(runs.rglob("ablation_table.csv")):
             ablations.append({"path": str(f.parent), "name": _rel(f.parent, runs)})
+        for f in sorted(runs.rglob("disturb_summary.csv")):
+            steering.append({"path": str(f.parent), "name": _rel(f.parent, runs)})
         seen = set()
         # per-head statistics (.npz next to the activations) first, summary tables second
         for f in sorted(runs.rglob("attn_distance.npz")) + sorted(runs.rglob("attention_distance.csv")):
@@ -83,19 +87,19 @@ def discover(runs: str | Path, data: str | Path | None = None) -> Found:
                              "family": m.get("family") or Path(str(m.get("source", ""))).name, "videos": n,
                              "targets": m.get("targets", {}),
                              "preview": str(f.parent / "preview.png") if (f.parent / "preview.png").exists() else None})
-    return Found(caches, probes, ablations, attention, datasets)
+    return Found(caches, probes, ablations, attention, datasets, steering)
 
 
 def discover_many(roots: list) -> Found:
     """roots: [(label, runs, data)]. Names get a 'label: ' prefix when label is set."""
-    merged = Found([], [], [], [], [])
+    merged = Found([], [], [], [], [], [])
     for label, runs, data in roots:
         f = discover(runs, data)
-        for field in ("caches", "probes", "ablations", "attention", "datasets"):
-            for e in getattr(f, field):
+        for name in ("caches", "probes", "ablations", "attention", "datasets", "steering"):
+            for e in getattr(f, name):
                 if label:
                     e = {**e, "name": f"{label}: {e['name']}"}
-                getattr(merged, field).append(e)
+                getattr(merged, name).append(e)
     return merged
 
 
@@ -285,3 +289,16 @@ def read_attention(path: str) -> dict:
         df = pd.read_csv(d / "attention_distance.csv")
         out["table"] = df
     return out
+
+
+def read_disturb(path) -> dict:
+    """A `physprobe disturb` run: the summary table, the layers with per-video rows,
+    and any figures made with `physprobe disturb-figure`."""
+    path = Path(path)
+    summary = pd.read_csv(path / "disturb_summary.csv")
+    figs = {}
+    for f in sorted(path.glob("disturb_L*_x*.png")):
+        m = re.match(r"disturb_L(\d+)_x([\d.]+)\.png", f.name)
+        if m:
+            figs[(int(m.group(1)), float(m.group(2)))] = str(f)
+    return {"summary": summary, "figures": figs}
