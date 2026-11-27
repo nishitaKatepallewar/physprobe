@@ -201,3 +201,98 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
                     r[f"pred_err_to_target_deg_{kind}"] = e[kind].mean()
             out.append(r)
     return pd.DataFrame(out)
+
+
+# ------------------------------------------------------------------------- figure
+
+def _ball_xy(video, t):
+    """Pixel position of the moving ball in frame t: centroid of the pixels that differ
+    most from the clip's per-pixel median (the static background)."""
+    v = video.astype(np.float32).mean(-1)
+    diff = np.abs(v[t] - np.median(v, 0))
+    m = diff > max(diff.max() * 0.5, 1.0)
+    if not m.any():
+        return v.shape[2] / 2, v.shape[1] / 2
+    ys, xs = np.nonzero(m)
+    return xs.mean(), ys.mean()
+
+
+def figure(df: pd.DataFrame, ds, path, scale: float, col: str = "direction_deg", examples: int = 6,
+           frames: int = 16, context_frames: int | None = None, seed: int = 0, title: str = ""):
+    """Two rows. Top: example videos at the last context frame, with arrows for the true
+    motion, the direction decoded from the predicted future without intervention, after
+    the steer, and after a same-size control. Bottom: for all videos, where the decoded
+    predicted direction points relative to the target, per condition."""
+    import matplotlib.pyplot as plt
+    from .plots import CAT, INK, MUTED, SURFACE
+    if "pred_dir_deg" not in df.columns:
+        raise ValueError("no decoded directions in this run (needs an angle variable and >= 8 videos)")
+    target = float(df.attrs.get("target", np.nan)) if df.attrs else np.nan
+    if not np.isfinite(target):
+        target = float(df.loc[df.kind == "steer", "pred_dir_deg"].median())
+    part = df[(df.scale == scale) | (df.kind == "unperturbed")]
+    if not (part.kind == "steer").any():
+        raise ValueError(f"no rows at scale {scale}; scales in this run: {sorted(df.scale.unique())}")
+    per = part.groupby(["video", "kind"])["pred_dir_deg"].agg(
+        lambda a: np.rad2deg(np.arctan2(np.sin(np.deg2rad(a)).mean(), np.cos(np.deg2rad(a)).mean())) % 360)
+    vids = per.index.get_level_values(0).unique().to_numpy()
+    rng = np.random.default_rng(seed)
+    # examples spread over true directions
+    truth = df.drop_duplicates("video").set_index("video")[col]
+    pick = []
+    for d in rng.permutation(truth.loc[vids].unique()):
+        cand = [v for v in vids if truth[v] == d and v not in pick]
+        if cand:
+            pick.append(int(rng.choice(cand)))
+        if len(pick) == examples:
+            break
+    ctx = context_frames or frames // 2
+    kinds = [("unperturbed", "#6f6e69", "model's prediction"), ("steer", CAT[7], f"after steer to {target:g}°")]
+    ctrl = next((k for k in ("permuted", "random") if (per.index.get_level_values(1) == k).any()), None)
+    if ctrl:
+        kinds.append((ctrl, CAT[0], f"after same-size {ctrl} shift"))
+    fig = plt.figure(figsize=(2.3 * max(len(pick), 4), 5.6))
+    gs = fig.add_gridspec(2, max(len(pick), 4), height_ratios=[1.15, 1], wspace=0.45, hspace=0.45)
+
+    def arrow(ax, x, y, deg, color, lw, L, ls="-"):
+        dx, dy = np.cos(np.deg2rad(deg)) * L, -np.sin(np.deg2rad(deg)) * L  # image y points down
+        ax.annotate("", (x + dx, y + dy), (x, y), arrowprops=dict(arrowstyle="-|>", color=color, lw=lw,
+                    ls=ls, shrinkA=0, shrinkB=0, mutation_scale=12))
+
+    for j, v in enumerate(pick):
+        ax = fig.add_subplot(gs[0, j])
+        clip = ds.get(int(v), frames)
+        f = clip[ctx - 1]
+        ax.imshow(f)
+        x, y = _ball_xy(clip, ctx - 1)
+        L = f.shape[0] * 0.28
+        arrow(ax, x, y, truth[v], "#1baf7a", 3.2, L)
+        for kind, color, _ in kinds:
+            if (v, kind) in per.index:
+                arrow(ax, x, y, per[(v, kind)], color, 2.0, L * (0.75 if kind == "unperturbed" else 0.9),
+                      ls="--" if kind == ctrl else ":" if kind == "unperturbed" else "-")
+        ax.set_title(f"moving {truth[v]:g}°", fontsize=9)
+        ax.set_xticks([]), ax.set_yticks([])
+    handles = [plt.Line2D([], [], color="#1baf7a", lw=3, label="true motion")] + [
+        plt.Line2D([], [], color=c, lw=2, ls="--" if k == ctrl else ":" if k == "unperturbed" else "-", label=lab)
+        for k, c, lab in kinds]
+    fig.legend(handles=handles, loc="upper center", ncol=len(handles), frameon=False, fontsize=9,
+               bbox_to_anchor=(0.5, 1.0))
+    for j, (kind, color, lab) in enumerate(kinds):
+        ax = fig.add_subplot(gs[1, j], projection="polar")
+        a = per.xs(kind, level=1).to_numpy()
+        rel = np.deg2rad((a - target + 180) % 360 - 180)
+        ax.hist(rel, bins=np.linspace(-np.pi, np.pi, 25), color=color, alpha=0.85, edgecolor=SURFACE)
+        ax.set_theta_zero_location("N")
+        ax.set_yticks([])
+        ax.set_xticks(np.deg2rad([0, 180]))
+        ax.set_xticklabels(["target", "opposite"], fontsize=7, color=MUTED)
+        err = np.abs(np.rad2deg(rel)).mean()
+        ax.set_title(f"{lab}\nmean error to target {err:.0f}°", fontsize=8.5, color=INK, pad=12)
+    fig.suptitle(title, y=1.05, fontsize=11)
+    fig.text(0.01, -0.02, "Arrows: direction decoded from the predicted second half of each clip (V-JEPA 2 "
+             "predicts in latent space, so this is a probe reading, not a rendered prediction). Bottom: "
+             "decoded predicted direction relative to the target, all videos.", fontsize=7.5, color=MUTED)
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    return pick

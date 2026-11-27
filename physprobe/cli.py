@@ -457,6 +457,19 @@ def cmd_disturb(a):
     print(f"-> {out}/disturb_summary.csv, disturb_L*.csv")
 
 
+def cmd_disturb_figure(a):
+    from . import disturb
+    from .datasets import VideoDataset
+    run = Path(a.run)
+    df = pd.read_csv(run / f"disturb_L{a.layer}.csv")
+    ds = VideoDataset(a.data)
+    df.attrs["target"] = a.target
+    path = run / f"disturb_L{a.layer}_x{a.scale:g}.png"
+    pick = disturb.figure(df, ds, path, a.scale, a.col, a.examples, seed=a.seed,
+                          title=a.title or f"Steering direction at layer {a.layer} (x{a.scale:g})")
+    print(f"examples: videos {pick}\n-> {path}")
+
+
 # ------------------------------------------------------------------------- ablate
 
 PAPER_ABLATIONS = {"spatial s=7": (7.0, None), "temporal t=3": (None, 3), "combined s=3,t=1": (3.0, 1)}
@@ -911,6 +924,19 @@ def main(argv=None):
     p.add_argument("--random-init", action="store_true")
     p.add_argument("--tiny", action="store_true")
     p.set_defaults(fn=cmd_disturb)
+
+    p = sub.add_parser("disturb-figure", help="picture of a disturb run: predicted directions before "
+                                              "and after the steer")
+    p.add_argument("--run", required=True, help="output folder of disturb")
+    p.add_argument("--data", required=True, help="dataset folder (for the video frames)")
+    p.add_argument("--layer", type=int, required=True)
+    p.add_argument("--scale", type=float, default=16.0)
+    p.add_argument("--target", type=float, default=90.0, help="the --target used for disturb")
+    p.add_argument("--col", default="direction_deg")
+    p.add_argument("--examples", type=int, default=6)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--title", default=None)
+    p.set_defaults(fn=cmd_disturb_figure)
 
     p = sub.add_parser("steer", help="subspace steering of a circular variable")
     p.add_argument("--acts", required=True)
