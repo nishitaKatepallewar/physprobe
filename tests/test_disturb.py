@@ -91,9 +91,9 @@ def test_disturb_command_on_tiny_model(tmp_path):
     main(["extract", "--data", str(tmp_path / "data"), "--out", str(tmp_path / "acts"), "--random-init",
           "--tiny", "--res", "64", "--device", "cpu"])
     main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "d"), "--tiny",
-          "--device", "cpu", "--n", "4", "--controls", "1", "--layers", "1"])
+          "--device", "cpu", "--n", "4", "--controls", "1", "--layers", "1", "--scales", "1,8"])
     s = pd.read_csv(tmp_path / "d" / "disturb_summary.csv")
-    assert set(s.metric) == {"l2", "l1"} and s.videos.iloc[0] == 4
+    assert set(s.metric) == {"l2", "l1"} and set(s.scale) == {1.0, 8.0} and s.videos.iloc[0] == 4
     assert np.isfinite(s.importance_vs_permuted).all() and np.isfinite(s.pull_vs_random).all()
     rows = pd.read_csv(tmp_path / "d" / "disturb_L1.csv")
     assert set(rows.kind) == {"unperturbed", "steer", "permuted", "random"}
