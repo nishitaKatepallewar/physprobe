@@ -104,10 +104,10 @@ def _fit_reader(P, Y):
 
 
 def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None = None,
-        n_controls: int = 3, control_kinds=("permuted", "random"), match_cols=("speed", "start_id"),
-        batch_size: int = 4, seed: int = 0, frames: int | None = None, scales=(1.0,),
-        target_norm: bool = True, method: str = "mean", sizes=None, speed_col: str | None = "speed",
-        harmonics: int = 2, progress=None) -> pd.DataFrame:
+        n_controls: int = 3, control_kinds=("permuted", "random", "shuffled"),
+        match_cols=("speed", "start_id"), batch_size: int = 4, seed: int = 0, frames: int | None = None,
+        scales=(1.0,), target_norm: bool = True, method: str = "mean", sizes=None,
+        speed_col: str | None = "speed", harmonics: int = 2, progress=None) -> pd.DataFrame:
     """One row per (video, condition). Conditions: unperturbed, and for every scale s
     steer@s and <kind>_<k>@s (controls with the norm of the scaled steer).
 
@@ -115,7 +115,13 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
             along a fitted ring of `harmonics` harmonics, see ring_shifts).
     sizes:  if given, each video's shift is rescaled to this fraction of the norm of
             its own activation (equal relative size across videos, layers and sets);
-            the values then replace `scales`."""
+            the values then replace `scales`.
+    controls (each with the norm of the steer, per video):
+      permuted  the steer's elements randomly permuted (Thorat et al., arXiv:2111.07898)
+      random    a Gaussian direction
+      shuffled  a steer built exactly like the real one (same method, same target) but
+                from randomly reassigned direction labels: as structured as the steer,
+                carrying no information about the video's actual direction"""
     import torch
     rng = np.random.default_rng(seed)
     frames = frames or cache.meta.get("frames", 16)
@@ -130,6 +136,20 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
     elif method != "mean":
         raise ValueError(f"method {method!r}")
     norms = np.linalg.norm(X, axis=1)
+
+    def build(v):
+        if method == "ring":
+            return ring_shifts(X, v, float(near), harmonics)
+        return condition_shifts(X, v, near)[0]
+    def build_shuffled():
+        S = build(rng.permutation(vals))
+        for _ in range(50):  # a video whose shuffled label is the target gets no shift: redraw it
+            dead = np.linalg.norm(S, axis=1) < 1e-9
+            if not dead.any():
+                break
+            S[dead] = build(rng.permutation(vals))[dead]
+        return S
+    shuffled = [build_shuffled() for _ in range(n_controls)] if "shuffled" in control_kinds else []
     if sizes:
         unit = delta_all / np.maximum(np.linalg.norm(delta_all, axis=1, keepdims=True), 1e-12)
         delta_all = unit * norms[:, None]
@@ -159,7 +179,13 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
             conds.append((f"steer@{sc:g}", "steer", sc, D))
             for kind in control_kinds:
                 for k in range(n_controls):
-                    conds.append((f"{kind}_{k}@{sc:g}", kind, sc, controls_for(D, kind, rng)))
+                    if kind == "shuffled":
+                        S = shuffled[k][b]
+                        C = S * (np.linalg.norm(D, axis=1, keepdims=True)
+                                 / np.maximum(np.linalg.norm(S, axis=1, keepdims=True), 1e-12))
+                    else:
+                        C = controls_for(D, kind, rng)
+                    conds.append((f"{kind}_{k}@{sc:g}", kind, sc, C))
         for name, kind, sc, D in conds:
             if D is None:
                 out = base
@@ -358,3 +384,21 @@ def figure(df: pd.DataFrame, ds, path, scale: float, col: str = "direction_deg",
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     return pick
+
+
+def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45.0) -> pd.DataFrame:
+    """The decision rule fixed before the runs (primary measure: pull, L2). Per layer
+    and size: PASS if the reader reads held-out predictions to within reader_max_deg
+    and the steer's pull exceeds every control's by at least n_se standard errors."""
+    out = []
+    for _, r in summary[summary.metric == "l2"].iterrows():
+        ctrls = [c[len("pull_vs_"):] for c in r.index if c.startswith("pull_vs_") and not c.endswith("_se")]
+        margins = {c: r[f"pull_vs_{c}"] / r[f"pull_vs_{c}_se"] if r[f"pull_vs_{c}_se"] > 0 else np.nan
+                   for c in ctrls}
+        reader_ok = bool(r.get("reader_err_deg", np.nan) <= reader_max_deg)
+        beats = bool(ctrls) and all(m >= n_se for m in margins.values())
+        out.append({"layer": r.get("layer"), "size": r.scale, "reader_err_deg": r.get("reader_err_deg"),
+                    "reader_ok": reader_ok, **{f"pull_z_vs_{c}": m for c, m in margins.items()},
+                    "verdict": "PASS" if (reader_ok and beats) else
+                               "NO VERDICT (reader too weak)" if not reader_ok else "FAIL"})
+    return pd.DataFrame(out)
