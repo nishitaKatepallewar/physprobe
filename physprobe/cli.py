@@ -441,9 +441,9 @@ def cmd_disturb(a):
         for _, r in sm[sm.metric == "l2"].iterrows():
             tag = f"size {r.scale:<4g}" if sizes else f"x{r.scale:<4g}"
             head = (f"  {tag} |shift|/|act| {r.shift_rel:.3f}  error: unperturbed {r.unperturbed:.4f} "
-                    f"steer {r.steer:.4f}" + "".join(f" {k} {r[k]:.4f}" for k in ("permuted", "random") if k in r))
+                    f"steer {r.steer:.4f}" + "".join(f" {k} {r[k]:.4f}" for k in ("permuted", "random", "shuffled") if k in r))
             print(head)
-            for k in ("permuted", "random"):
+            for k in ("permuted", "random", "shuffled"):
                 if f"importance_vs_{k}" not in r:
                     continue
                 line = (f"         vs {k:8s} importance {r[f'importance_vs_{k}']:+.4f} "
@@ -457,15 +457,24 @@ def cmd_disturb(a):
             if "speed_change_steer" in r and pd.notna(r["speed_change_steer"]):
                 print(f"         predicted speed (reader error on held-out unperturbed predictions "
                       f"{r.get('speed_reader_err', float('nan')):.2f}), median change: steer {r.speed_change_steer:.2f}"
-                      + "".join(f", {k} {r[f'speed_change_{k}']:.2f}" for k in ("permuted", "random")
+                      + "".join(f", {k} {r[f'speed_change_{k}']:.2f}" for k in ("permuted", "random", "shuffled")
                                 if f"speed_change_{k}" in r))
             if "pred_err_to_target_deg_steer" in r and pd.notna(r["pred_err_to_target_deg_steer"]):
                 print(f"         predicted future, decoded direction: error to {df.attrs['target']} deg "
                       f"unperturbed {r.pred_err_to_target_deg_unperturbed:.1f}, steer "
                       f"{r.pred_err_to_target_deg_steer:.1f}"
                       + "".join(f", {k} {r[f'pred_err_to_target_deg_{k}']:.1f}"
-                                for k in ("permuted", "random") if f"pred_err_to_target_deg_{k}" in r))
-    pd.concat(summaries).to_csv(out / "disturb_summary.csv", index=False)
+                                for k in ("permuted", "random", "shuffled") if f"pred_err_to_target_deg_{k}" in r))
+    allsum = pd.concat(summaries)
+    allsum.to_csv(out / "disturb_summary.csv", index=False)
+    v = disturb.verdict(allsum)
+    v.to_csv(out / "disturb_verdict.csv", index=False)
+    print("\nDecision rule (fixed in advance; primary measure = pull towards the real future of a video "
+          "moving in the target direction): PASS if the reader reads held-out predictions to within 45 deg "
+          "AND the steer's pull beats every control by >= 2 standard errors.")
+    for _, r in v.iterrows():
+        zs = "  ".join(f"{c[len('pull_z_vs_'):]} z={r[c]:+.1f}" for c in v.columns if c.startswith("pull_z_vs_"))
+        print(f"  layer {int(r.layer)} size {r['size']:g}: reader {r.reader_err_deg:.1f} deg  {zs}  -> {r.verdict}")
     print(f"-> {out}/disturb_summary.csv, disturb_L*.csv")
 
 

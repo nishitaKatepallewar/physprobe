@@ -37,6 +37,18 @@ def test_ring_shift_moves_along_the_fitted_ring():
     np.testing.assert_allclose(D[ang == 90], 0, atol=0.02)
 
 
+def test_verdict_rule():
+    row = {"layer": 8, "scale": 0.4, "metric": "l2", "reader_err_deg": 20.0,
+           "pull_vs_permuted": 0.03, "pull_vs_permuted_se": 0.01,
+           "pull_vs_shuffled": 0.01, "pull_vs_shuffled_se": 0.01}
+    v = disturb.verdict(pd.DataFrame([row]))
+    assert v.verdict.iloc[0] == "FAIL"  # does not beat the shuffled-label control
+    row["pull_vs_shuffled"] = 0.025
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "PASS"
+    row["reader_err_deg"] = 70.0
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0].startswith("NO VERDICT")
+
+
 def test_matched_ids():
     lab = pd.DataFrame({"direction_deg": [0, 90, 0, 90], "speed": [1, 1, 2, 2], "start_id": [0, 0, 0, 0]})
     m = disturb.matched_ids(lab, "direction_deg", 90, ["speed", "start_id"])
@@ -109,7 +121,12 @@ def test_disturb_command_on_tiny_model(tmp_path):
     assert set(s.metric) == {"l2", "l1"} and set(s.scale) == {1.0, 8.0} and s.videos.iloc[0] == 8
     assert np.isfinite(s.importance_vs_permuted).all() and np.isfinite(s.pull_vs_random).all()
     rows = pd.read_csv(tmp_path / "d" / "disturb_L1.csv")
-    assert set(rows.kind) == {"unperturbed", "steer", "permuted", "random"}
+    assert set(rows.kind) == {"unperturbed", "steer", "permuted", "random", "shuffled"}
+    st = rows[rows.kind == "steer"].set_index(["video", "scale"]).shift_rel
+    sh = rows[rows.kind == "shuffled"].groupby(["video", "scale"]).shift_rel.mean()
+    np.testing.assert_allclose(sh.reindex(st.index), st, rtol=1e-4)  # same size as the steer
+    v = pd.read_csv(tmp_path / "d" / "disturb_verdict.csv")
+    assert set(v.verdict) <= {"PASS", "FAIL", "NO VERDICT (reader too weak)"}
     assert "pred_dir_deg" in rows.columns
     main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "r"), "--tiny",
           "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "ring",
