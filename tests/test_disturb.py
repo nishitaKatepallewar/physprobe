@@ -76,7 +76,7 @@ def test_planted_importance_and_pull():
     X[:, 0] += np.cos(np.deg2rad(vals)) * 3  # the condition means differ along u
     ids = np.where(vals != 90)[0]
     df = disturb.run(_Enc(X, u), _DS(), _Cache(X, labels), 0, "direction_deg", 90, ids, context=4,
-                     n_controls=3, batch_size=5)
+                     n_controls=3, batch_size=5, target_norm=False)
     s = disturb.summarize(df).set_index("metric")
     assert s.loc["l2", "importance_vs_permuted"] > 1.0
     assert s.loc["l2", "importance_vs_random"] > 1.0

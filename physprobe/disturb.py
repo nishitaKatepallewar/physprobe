@@ -73,10 +73,19 @@ def _err(pred, ref):
     return (d ** 2).mean(dim=(1, 2)).numpy(), d.abs().mean(dim=(1, 2)).numpy()
 
 
+def _ln(x):
+    """V-JEPA's prediction target: encoder outputs layer-normalised without affine
+    parameters (the training loss compares the predictor with F.layer_norm(h))."""
+    import torch.nn.functional as F
+    return F.layer_norm(x, (x.shape[-1],))
+
+
 def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None = None,
         n_controls: int = 3, control_kinds=("permuted", "random"), match_cols=("speed", "start_id"),
-        batch_size: int = 4, seed: int = 0, frames: int | None = None, progress=None) -> pd.DataFrame:
-    """One row per (video, condition). Conditions: unperturbed, steer, <kind>_<k>."""
+        batch_size: int = 4, seed: int = 0, frames: int | None = None, scales=(1.0,),
+        target_norm: bool = True, progress=None) -> pd.DataFrame:
+    """One row per (video, condition). Conditions: unperturbed, and for every scale s
+    steer@s and <kind>_<k>@s (controls with the norm of the scaled steer)."""
     import torch
     rng = np.random.default_rng(seed)
     frames = frames or cache.meta.get("frames", 16)
@@ -89,13 +98,14 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
     match = matched_ids(labels, col, near, match_cols)
     ids = np.asarray(ids)
     norms = np.linalg.norm(X, axis=1)
-    rows = []
-    future_cache: dict[int, torch.Tensor] = {}
+    norm = _ln if target_norm else (lambda x: x)
+    rows, pooled = [], []
+    future_cache: dict = {}
 
     def future_of(j, tgt_ids):
         if j not in future_cache:
             v = np.stack([ds.get(int(j), frames)])
-            future_cache[j] = enc.predict(v, context)["tokens"][0, tgt_ids]
+            future_cache[j] = norm(enc.predict(v, context)["tokens"][0, tgt_ids])
         return future_cache[j]
 
     batches = [ids[s:s + batch_size] for s in range(0, len(ids), batch_size)]
@@ -103,58 +113,91 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
         vids = np.stack([ds.get(int(i), frames) for i in b])
         base = enc.predict(vids, context)
         tgt_ids = base["target_ids"]
-        own_future = base["tokens"][:, tgt_ids]
+        own_future = norm(base["tokens"][:, tgt_ids])
         alt = [future_of(int(match[i]), tgt_ids) if match[i] >= 0 else None for i in b]
-        conds = {"unperturbed": None, "steer": delta_all[b]}
-        for kind in control_kinds:
-            for k in range(n_controls):
-                conds[f"{kind}_{k}"] = controls_for(delta_all[b], kind, rng)
-        for name, D in conds.items():
+        conds = [("unperturbed", "unperturbed", 0.0, None)]
+        for sc in scales:
+            D = delta_all[b] * sc
+            conds.append((f"steer@{sc:g}", "steer", sc, D))
+            for kind in control_kinds:
+                for k in range(n_controls):
+                    conds.append((f"{kind}_{k}@{sc:g}", kind, sc, controls_for(D, kind, rng)))
+        for name, kind, sc, D in conds:
             if D is None:
                 out = base
             else:
                 d = torch.as_tensor(D, dtype=torch.float32, device=enc.device)
                 out = enc.predict(vids, context, edits={layer: lambda h, d=d: h + d[:, None, :].to(h.dtype)})
             l2, l1 = _err(out["pred"], own_future)
+            pm = out["pred"].mean(1).numpy()
             for r, i in enumerate(b):
-                row = {"video": int(i), col: vals[i], "condition": name,
-                       "kind": name.split("_")[0] if name not in ("unperturbed", "steer") else name,
+                row = {"video": int(i), col: vals[i], "condition": name, "kind": kind, "scale": sc,
                        "l2": float(l2[r]), "l1": float(l1[r]),
                        "shift_rel": 0.0 if D is None else float(np.linalg.norm(D[r]) / norms[i])}
                 if alt[r] is not None:
                     a2, a1 = _err(out["pred"][r:r + 1], alt[r][None])
                     row.update(l2_to_target=float(a2[0]), l1_to_target=float(a1[0]))
                 rows.append(row)
+                pooled.append(pm[r])
         if progress:
             progress(bi + 1, len(batches))
     df = pd.DataFrame(rows)
+    _decode_predicted_direction(df, np.stack(pooled), col, near)
     df.attrs.update(layer=layer, target=near, context_tubelets=context, tubelets=Tt)
     return df
 
 
+def _decode_predicted_direction(df, P, col, near):
+    """Read the direction of the *predicted* future: a ridge probe fitted on the
+    unperturbed predictions (mean over predicted tokens) against the true direction,
+    applied to every condition. Only for angle variables with enough videos."""
+    from .subspace import IsoScaler, ridge_readout
+    base = (df.kind == "unperturbed").to_numpy()
+    if not str(col).endswith("_deg") or base.sum() < 8 or df.loc[base, col].nunique() < 3:
+        return
+    th = np.deg2rad(df[col].to_numpy(dtype=float))
+    Y = np.stack([np.sin(th), np.cos(th)], 1)
+    sc = IsoScaler(P[base])
+    W, b0 = ridge_readout(sc(P[base]), Y[base])
+    Q = sc(P) @ W + b0
+    ang = np.rad2deg(np.arctan2(Q[:, 0], Q[:, 1])) % 360
+    df["pred_dir_deg"] = ang
+    df["pred_err_to_target_deg"] = np.abs((ang - float(near) + 180) % 360 - 180)
+    df["pred_err_to_true_deg"] = np.abs((ang - df[col].to_numpy(dtype=float) + 180) % 360 - 180)
+
+
 def summarize(df: pd.DataFrame) -> pd.DataFrame:
-    """Mean error per condition kind, and functional importance against each control.
-    Controls are averaged over their repeats per video first."""
-    per = df.groupby(["video", "kind"]).mean(numeric_only=True).reset_index()
-    has_t = "l2_to_target" in per.columns
-    w = per.pivot(index="video", columns="kind")
-    rows = []
-    for metric in ("l2", "l1"):
-        base = w[metric]["unperturbed"]
-        r = {"metric": metric, "unperturbed": base.mean(), "steer": w[metric]["steer"].mean()}
-        for kind in [k for k in w[metric].columns if k not in ("unperturbed", "steer")]:
-            r[kind] = w[metric][kind].mean()
-            fi = (w[metric]["steer"] - w[metric][kind]) / base
-            r[f"importance_vs_{kind}"] = fi.mean()
-            r[f"importance_vs_{kind}_se"] = fi.std(ddof=1) / np.sqrt(fi.notna().sum())
-            r[f"steer_worse_than_{kind}_frac"] = float((w[metric]["steer"] > w[metric][kind]).mean())
-            if has_t:
+    """Per scale: mean error per condition kind, functional importance and pull against
+    each control (controls averaged over their repeats per video first) and, when
+    available, the decoded direction of the predicted future."""
+    out = []
+    base = df[df.kind == "unperturbed"].set_index("video")
+    for sc in sorted(s for s in df.scale.unique() if s > 0):
+        part = df[df.scale == sc]
+        per = part.groupby(["video", "kind"]).mean(numeric_only=True).reset_index()
+        w = per.pivot(index="video", columns="kind")
+        kinds = [k for k in w["l2"].columns if k != "steer"]
+        for metric in ("l2", "l1"):
+            b = base[metric].reindex(w.index)
+            r = {"scale": sc, "metric": metric, "shift_rel": w["shift_rel"]["steer"].mean(),
+                 "videos": len(w), "unperturbed": b.mean(), "steer": w[metric]["steer"].mean()}
+            for kind in kinds:
+                r[kind] = w[metric][kind].mean()
+                fi = (w[metric]["steer"] - w[metric][kind]) / b
+                r[f"importance_vs_{kind}"] = fi.mean()
+                r[f"importance_vs_{kind}_se"] = fi.std(ddof=1) / np.sqrt(fi.notna().sum())
+                r[f"steer_worse_than_{kind}_frac"] = float((w[metric]["steer"] > w[metric][kind]).mean())
                 tm = f"{metric}_to_target"
-                pull = (w[tm][kind] - w[tm]["steer"]) / w[tm]["unperturbed"]
-                r[f"pull_vs_{kind}"] = pull.mean()
-                r[f"pull_vs_{kind}_se"] = pull.std(ddof=1) / np.sqrt(pull.notna().sum())
-        rows.append(r)
-    out = pd.DataFrame(rows)
-    out.insert(1, "shift_rel", per[per.kind == "steer"]["shift_rel"].mean())
-    out.insert(2, "videos", per.video.nunique())
-    return out
+                if tm in w:
+                    bt = base[tm].reindex(w.index)
+                    pull = (w[tm][kind] - w[tm]["steer"]) / bt
+                    r[f"pull_vs_{kind}"] = pull.mean()
+                    r[f"pull_vs_{kind}_se"] = pull.std(ddof=1) / np.sqrt(pull.notna().sum())
+            if "pred_err_to_target_deg" in w:
+                e = w["pred_err_to_target_deg"]
+                r["pred_err_to_target_deg_unperturbed"] = base["pred_err_to_target_deg"].reindex(w.index).mean()
+                r["pred_err_to_target_deg_steer"] = e["steer"].mean()
+                for kind in kinds:
+                    r[f"pred_err_to_target_deg_{kind}"] = e[kind].mean()
+            out.append(r)
+    return pd.DataFrame(out)
