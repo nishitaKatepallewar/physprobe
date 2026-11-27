@@ -80,12 +80,42 @@ def _ln(x):
     return F.layer_norm(x, (x.shape[-1],))
 
 
+def ring_shifts(X: np.ndarray, angles_deg: np.ndarray, target_deg: float, harmonics: int = 2):
+    """Shift along a fitted ring instead of between condition means. A smooth model
+    x ~ mu + sum_k A_k cos(k th) + B_k sin(k th) is fitted by least squares over all
+    videos; each video is moved from its own angle to the target angle on that model,
+    keeping everything the model does not explain (its residual) unchanged. The shift
+    lies in the 2 * harmonics dimensions of the ring, so it carries no other factor."""
+    th = np.deg2rad(angles_deg.astype(float))
+    def basis(t):
+        return np.stack([f(k * t) for k in range(1, harmonics + 1) for f in (np.cos, np.sin)], -1)
+    F = basis(th)
+    Fc = F - F.mean(0)
+    coef, *_ = np.linalg.lstsq(Fc, X - X.mean(0), rcond=None)  # [2K, d]
+    tgt = basis(np.full(len(th), np.deg2rad(float(target_deg))))
+    return (tgt - F) @ coef
+
+
+def _fit_reader(P, Y):
+    from .subspace import IsoScaler, ridge_readout
+    sc = IsoScaler(P)
+    W, b0 = ridge_readout(sc(P), Y)
+    return lambda Q: sc(Q) @ W + b0
+
+
 def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None = None,
         n_controls: int = 3, control_kinds=("permuted", "random"), match_cols=("speed", "start_id"),
         batch_size: int = 4, seed: int = 0, frames: int | None = None, scales=(1.0,),
-        target_norm: bool = True, progress=None) -> pd.DataFrame:
+        target_norm: bool = True, method: str = "mean", sizes=None, speed_col: str | None = "speed",
+        harmonics: int = 2, progress=None) -> pd.DataFrame:
     """One row per (video, condition). Conditions: unperturbed, and for every scale s
-    steer@s and <kind>_<k>@s (controls with the norm of the scaled steer)."""
+    steer@s and <kind>_<k>@s (controls with the norm of the scaled steer).
+
+    method: "mean" (difference of condition means, all dimensions) or "ring" (move
+            along a fitted ring of `harmonics` harmonics, see ring_shifts).
+    sizes:  if given, each video's shift is rescaled to this fraction of the norm of
+            its own activation (equal relative size across videos, layers and sets);
+            the values then replace `scales`."""
     import torch
     rng = np.random.default_rng(seed)
     frames = frames or cache.meta.get("frames", 16)
@@ -95,9 +125,17 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
     X = cache.layer(layer).astype(np.float64)
     vals = labels[col].to_numpy()
     delta_all, near = condition_shifts(X, vals, target)
+    if method == "ring":
+        delta_all = ring_shifts(X, vals, float(near), harmonics)
+    elif method != "mean":
+        raise ValueError(f"method {method!r}")
+    norms = np.linalg.norm(X, axis=1)
+    if sizes:
+        unit = delta_all / np.maximum(np.linalg.norm(delta_all, axis=1, keepdims=True), 1e-12)
+        delta_all = unit * norms[:, None]
+        scales = sizes
     match = matched_ids(labels, col, near, match_cols)
     ids = np.asarray(ids)
-    norms = np.linalg.norm(X, axis=1)
     norm = _ln if target_norm else (lambda x: x)
     rows, pooled = [], []
     future_cache: dict = {}
@@ -129,11 +167,13 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
                 d = torch.as_tensor(D, dtype=torch.float32, device=enc.device)
                 out = enc.predict(vids, context, edits={layer: lambda h, d=d: h + d[:, None, :].to(h.dtype)})
             l2, l1 = _err(out["pred"], own_future)
-            pm = out["pred"].mean(1).numpy()
+            pm = norm(out["pred"]).mean(1).numpy()
             for r, i in enumerate(b):
                 row = {"video": int(i), col: vals[i], "condition": name, "kind": kind, "scale": sc,
                        "l2": float(l2[r]), "l1": float(l1[r]),
                        "shift_rel": 0.0 if D is None else float(np.linalg.norm(D[r]) / norms[i])}
+                if speed_col and speed_col in labels.columns:
+                    row[speed_col] = labels[speed_col].iloc[i]
                 if alt[r] is not None:
                     a2, a1 = _err(out["pred"][r:r + 1], alt[r][None])
                     row.update(l2_to_target=float(a2[0]), l1_to_target=float(a1[0]))
@@ -142,28 +182,41 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
         if progress:
             progress(bi + 1, len(batches))
     df = pd.DataFrame(rows)
-    _decode_predicted_direction(df, np.stack(pooled), col, near)
-    df.attrs.update(layer=layer, target=near, context_tubelets=context, tubelets=Tt)
-    return df
+    P = np.stack(pooled)
+    df.attrs.update(layer=layer, target=near, context_tubelets=context, tubelets=Tt, method=method)
+    _decode_predictions(df, P, col, near, speed_col)
+    return df, P
 
 
-def _decode_predicted_direction(df, P, col, near):
-    """Read the direction of the *predicted* future: a ridge probe fitted on the
-    unperturbed predictions (mean over predicted tokens) against the true direction,
-    applied to every condition. Only for angle variables with enough videos."""
-    from .subspace import IsoScaler, ridge_readout
+def _decode_predictions(df, P, col, near, speed_col=None):
+    """Read the direction (and speed) of the *predicted* future. Leave-one-video-out:
+    every condition of video v is read by a ridge probe fitted on the unperturbed
+    predictions of the other videos, so the reader never saw the video it scores.
+    Adds reader_err_deg (unperturbed: how well the reader reads held-out predictions)."""
     base = (df.kind == "unperturbed").to_numpy()
     if not str(col).endswith("_deg") or base.sum() < 8 or df.loc[base, col].nunique() < 3:
         return
     th = np.deg2rad(df[col].to_numpy(dtype=float))
     Y = np.stack([np.sin(th), np.cos(th)], 1)
-    sc = IsoScaler(P[base])
-    W, b0 = ridge_readout(sc(P[base]), Y[base])
-    Q = sc(P) @ W + b0
-    ang = np.rad2deg(np.arctan2(Q[:, 0], Q[:, 1])) % 360
+    spd = (df[speed_col].to_numpy(dtype=float)
+           if speed_col and speed_col in df.columns and df[speed_col].nunique() > 1 else None)
+    vid = df.video.to_numpy()
+    ang = np.full(len(df), np.nan)
+    sp = np.full(len(df), np.nan)
+    for v in np.unique(vid):
+        train = base & (vid != v)
+        rows = vid == v
+        Q = _fit_reader(P[train], Y[train])(P[rows])
+        ang[rows] = np.rad2deg(np.arctan2(Q[:, 0], Q[:, 1])) % 360
+        if spd is not None and np.ptp(spd[train]) > 0:
+            sp[rows] = _fit_reader(P[train], spd[train, None])(P[rows])[:, 0]
     df["pred_dir_deg"] = ang
     df["pred_err_to_target_deg"] = np.abs((ang - float(near) + 180) % 360 - 180)
     df["pred_err_to_true_deg"] = np.abs((ang - df[col].to_numpy(dtype=float) + 180) % 360 - 180)
+    if spd is not None:
+        df["pred_speed"] = sp
+        base_sp = pd.Series(sp[base], index=vid[base])
+        df["pred_speed_change"] = sp - base_sp.reindex(vid).to_numpy()
 
 
 def summarize(df: pd.DataFrame) -> pd.DataFrame:
@@ -195,10 +248,19 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
                     r[f"pull_vs_{kind}_se"] = pull.std(ddof=1) / np.sqrt(pull.notna().sum())
             if "pred_err_to_target_deg" in w:
                 e = w["pred_err_to_target_deg"]
+                r["reader_err_deg"] = base["pred_err_to_true_deg"].reindex(w.index).mean()
                 r["pred_err_to_target_deg_unperturbed"] = base["pred_err_to_target_deg"].reindex(w.index).mean()
                 r["pred_err_to_target_deg_steer"] = e["steer"].mean()
                 for kind in kinds:
                     r[f"pred_err_to_target_deg_{kind}"] = e[kind].mean()
+            if "pred_speed_change" in w:
+                sb = base.reindex(w.index)
+                r["speed_reader_err"] = (sb["pred_speed"] - sb[next(c for c in sb.columns if c == "speed")]).abs().mean() \
+                    if "speed" in sb.columns else np.nan
+                c = w["pred_speed_change"].abs()  # medians: a linear reader can extrapolate wildly
+                r["speed_change_steer"] = c["steer"].median()
+                for kind in kinds:
+                    r[f"speed_change_{kind}"] = c[kind].median()
             out.append(r)
     return pd.DataFrame(out)
 

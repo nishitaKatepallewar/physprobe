@@ -24,6 +24,19 @@ def test_controls_keep_norm():
     np.testing.assert_allclose(np.sort(p, 1), np.sort(d, 1))
 
 
+def test_ring_shift_moves_along_the_fitted_ring():
+    rng = np.random.default_rng(0)
+    ang = np.repeat(np.arange(0, 360, 45), 5).astype(float)
+    th = np.deg2rad(ang)
+    a, b = rng.standard_normal(16), rng.standard_normal(16)
+    resid = rng.standard_normal((len(ang), 16)) * 0.01
+    X = np.cos(th)[:, None] * a + np.sin(th)[:, None] * b + resid
+    D = disturb.ring_shifts(X, ang, 90.0, harmonics=1)
+    moved = X + D
+    np.testing.assert_allclose(moved - resid, np.tile(b, (len(ang), 1)), atol=0.02)  # all at 90 deg
+    np.testing.assert_allclose(D[ang == 90], 0, atol=0.02)
+
+
 def test_matched_ids():
     lab = pd.DataFrame({"direction_deg": [0, 90, 0, 90], "speed": [1, 1, 2, 2], "start_id": [0, 0, 0, 0]})
     m = disturb.matched_ids(lab, "direction_deg", 90, ["speed", "start_id"])
@@ -75,7 +88,7 @@ def test_planted_importance_and_pull():
     X = rng.standard_normal((len(vals), d)) * 0.1
     X[:, 0] += np.cos(np.deg2rad(vals)) * 3  # the condition means differ along u
     ids = np.where(vals != 90)[0]
-    df = disturb.run(_Enc(X, u), _DS(), _Cache(X, labels), 0, "direction_deg", 90, ids, context=4,
+    df, _ = disturb.run(_Enc(X, u), _DS(), _Cache(X, labels), 0, "direction_deg", 90, ids, context=4,
                      n_controls=3, batch_size=5, target_norm=False)
     s = disturb.summarize(df).set_index("metric")
     assert s.loc["l2", "importance_vs_permuted"] > 1.0
@@ -98,6 +111,13 @@ def test_disturb_command_on_tiny_model(tmp_path):
     rows = pd.read_csv(tmp_path / "d" / "disturb_L1.csv")
     assert set(rows.kind) == {"unperturbed", "steer", "permuted", "random"}
     assert "pred_dir_deg" in rows.columns
+    main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "r"), "--tiny",
+          "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "ring",
+          "--sizes", "0.3"])
+    r = pd.read_csv(tmp_path / "r" / "disturb_L1.csv")
+    np.testing.assert_allclose(r[r.kind == "steer"].shift_rel, 0.3, rtol=1e-4)
+    assert np.load(tmp_path / "r" / "disturb_L1_predictions.npz")["pooled"].shape[0] == len(r)
+    assert "pred_speed_change" not in r.columns or r.pred_speed_change.notna().any()
     main(["disturb-figure", "--run", str(tmp_path / "d"), "--data", str(tmp_path / "data"), "--layer", "1",
           "--scale", "8", "--examples", "3"])
     assert (tmp_path / "d" / "disturb_L1_x8.png").stat().st_size > 10_000
@@ -106,7 +126,7 @@ def test_disturb_command_on_tiny_model(tmp_path):
     from physprobe.gui import data as D
     from physprobe.gui import figures as F
     found = D.discover(tmp_path, tmp_path / "data")
-    assert [e["name"] for e in found.steering] == ["d"]
+    assert [e["name"] for e in found.steering] == ["d", "r"]
     bundle = export_bundle(tmp_path, tmp_path.parent / f"{tmp_path.name}_bundle", data=tmp_path / "data",
                            progress=lambda *_: None)
     res = D.read_disturb(D.discover(bundle).steering[0]["path"])
