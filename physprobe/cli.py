@@ -420,31 +420,39 @@ def cmd_disturb(a):
     _, near = disturb.condition_shifts(c.layer(layers[0]), vals, a.target)
     pool = np.where(vals != near)[0]  # videos already at the target value get no shift
     ids = np.sort(np.random.default_rng(a.seed).permutation(pool)[:a.n])
+    scales = [float(x) for x in str(a.scales).split(",")]
     summaries = []
     for l in layers:
         bar = tqdm(total=-(-len(ids) // a.batch_size), desc=f"disturb L{l}", unit="batch")
         df = disturb.run(enc, ds, c, l, a.col, a.target, ids, a.context, a.controls,
-                         batch_size=a.batch_size, seed=a.seed, frames=a.frames,
-                         match_cols=a.match, progress=lambda i, n: bar.update(1))
+                         batch_size=a.batch_size, seed=a.seed, frames=a.frames, match_cols=a.match,
+                         scales=scales, target_norm=not a.raw_targets, progress=lambda i, n: bar.update(1))
         bar.close()
         df.to_csv(out / f"disturb_L{l}.csv", index=False)
         sm = disturb.summarize(df)
         sm.insert(0, "layer", l)
         summaries.append(sm)
-        r = sm[sm.metric == "l2"].iloc[0]
-        print(f"\nlayer {l}: shift to {a.col} = {df.attrs['target']} in {r.videos} videos, "
-              f"|shift| / |activation| = {r.shift_rel:.3f}; context {df.attrs['context_tubelets']} of "
-              f"{df.attrs['tubelets']} tubelets")
-        print(f"  prediction error (L2) unperturbed {r.unperturbed:.4f}   steer {r.steer:.4f}   "
-              + "   ".join(f"{k} {r[k]:.4f}" for k in ("permuted", "random") if k in r))
-        for k in ("permuted", "random"):
-            if f"importance_vs_{k}" in r:
-                line = (f"  vs {k:8s}: importance {r[f'importance_vs_{k}']:+.4f} "
-                        f"(+/- {r[f'importance_vs_{k}_se']:.4f} s.e.), steer worse in "
-                        f"{r[f'steer_worse_than_{k}_frac']:.0%} of videos")
-                if f"pull_vs_{k}" in r:
-                    line += f"; pull towards the target future {r[f'pull_vs_{k}']:+.4f} (+/- {r[f'pull_vs_{k}_se']:.4f})"
+        print(f"\nlayer {l}: shift towards {a.col} = {df.attrs['target']}, {len(ids)} videos, context "
+              f"{df.attrs['context_tubelets']} of {df.attrs['tubelets']} tubelets; L2 prediction error, "
+              f"importance = (steer - control) / unperturbed, pull = towards the target video's future")
+        for _, r in sm[sm.metric == "l2"].iterrows():
+            head = (f"  x{r.scale:<4g} |shift|/|act| {r.shift_rel:.3f}  error: unperturbed {r.unperturbed:.4f} "
+                    f"steer {r.steer:.4f}" + "".join(f" {k} {r[k]:.4f}" for k in ("permuted", "random") if k in r))
+            print(head)
+            for k in ("permuted", "random"):
+                if f"importance_vs_{k}" not in r:
+                    continue
+                line = (f"         vs {k:8s} importance {r[f'importance_vs_{k}']:+.4f} "
+                        f"(s.e. {r[f'importance_vs_{k}_se']:.4f})")
+                if f"pull_vs_{k}" in r and pd.notna(r[f"pull_vs_{k}"]):
+                    line += f"  pull {r[f'pull_vs_{k}']:+.4f} (s.e. {r[f'pull_vs_{k}_se']:.4f})"
                 print(line)
+            if "pred_err_to_target_deg_steer" in r and pd.notna(r["pred_err_to_target_deg_steer"]):
+                print(f"         predicted future, decoded direction: error to {df.attrs['target']} deg "
+                      f"unperturbed {r.pred_err_to_target_deg_unperturbed:.1f}, steer "
+                      f"{r.pred_err_to_target_deg_steer:.1f}"
+                      + "".join(f", {k} {r[f'pred_err_to_target_deg_{k}']:.1f}"
+                                for k in ("permuted", "random") if f"pred_err_to_target_deg_{k}" in r))
     pd.concat(summaries).to_csv(out / "disturb_summary.csv", index=False)
     print(f"-> {out}/disturb_summary.csv, disturb_L*.csv")
 
@@ -886,6 +894,11 @@ def main(argv=None):
                    help="tubelets given to the predictor as context (default: first half)")
     p.add_argument("--n", type=int, default=48, help="videos (random subset)")
     p.add_argument("--controls", type=int, default=3, help="repeats of each control per video")
+    p.add_argument("--scales", default="1,4,16",
+                   help="multiples of the difference-of-means shift (controls use the same norms)")
+    p.add_argument("--raw-targets", action="store_true",
+                   help="compare with raw encoder outputs instead of layer-normalised ones "
+                        "(V-JEPA's training target is layer-normalised)")
     p.add_argument("--match", nargs="*", default=["speed", "start_id"],
                    help="factors held fixed to find the steered video's real future (pull)")
     p.add_argument("--seed", type=int, default=0)
