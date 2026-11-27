@@ -424,19 +424,23 @@ def cmd_disturb(a):
     summaries = []
     for l in layers:
         bar = tqdm(total=-(-len(ids) // a.batch_size), desc=f"disturb L{l}", unit="batch")
-        df = disturb.run(enc, ds, c, l, a.col, a.target, ids, a.context, a.controls,
-                         batch_size=a.batch_size, seed=a.seed, frames=a.frames, match_cols=a.match,
-                         scales=scales, target_norm=not a.raw_targets, progress=lambda i, n: bar.update(1))
+        sizes = [float(x) for x in a.sizes.split(",")] if a.sizes else None
+        df, P = disturb.run(enc, ds, c, l, a.col, a.target, ids, a.context, a.controls,
+                            batch_size=a.batch_size, seed=a.seed, frames=a.frames, match_cols=a.match,
+                            scales=scales, target_norm=not a.raw_targets, method=a.method, sizes=sizes,
+                            harmonics=a.harmonics, progress=lambda i, n: bar.update(1))
         bar.close()
         df.to_csv(out / f"disturb_L{l}.csv", index=False)
+        np.savez_compressed(out / f"disturb_L{l}_predictions.npz", pooled=P.astype(np.float32))
         sm = disturb.summarize(df)
         sm.insert(0, "layer", l)
         summaries.append(sm)
-        print(f"\nlayer {l}: shift towards {a.col} = {df.attrs['target']}, {len(ids)} videos, context "
+        print(f"\nlayer {l} [{a.method} steer]: shift towards {a.col} = {df.attrs['target']}, {len(ids)} videos, context "
               f"{df.attrs['context_tubelets']} of {df.attrs['tubelets']} tubelets; L2 prediction error, "
               f"importance = (steer - control) / unperturbed, pull = towards the target video's future")
         for _, r in sm[sm.metric == "l2"].iterrows():
-            head = (f"  x{r.scale:<4g} |shift|/|act| {r.shift_rel:.3f}  error: unperturbed {r.unperturbed:.4f} "
+            tag = f"size {r.scale:<4g}" if sizes else f"x{r.scale:<4g}"
+            head = (f"  {tag} |shift|/|act| {r.shift_rel:.3f}  error: unperturbed {r.unperturbed:.4f} "
                     f"steer {r.steer:.4f}" + "".join(f" {k} {r[k]:.4f}" for k in ("permuted", "random") if k in r))
             print(head)
             for k in ("permuted", "random"):
@@ -447,6 +451,14 @@ def cmd_disturb(a):
                 if f"pull_vs_{k}" in r and pd.notna(r[f"pull_vs_{k}"]):
                     line += f"  pull {r[f'pull_vs_{k}']:+.4f} (s.e. {r[f'pull_vs_{k}_se']:.4f})"
                 print(line)
+            if "reader_err_deg" in r and pd.notna(r["reader_err_deg"]):
+                print(f"         reader check: direction of held-out unperturbed predictions read to within "
+                      f"{r.reader_err_deg:.1f} deg of the truth (0 = perfect, 90 = chance)")
+            if "speed_change_steer" in r and pd.notna(r["speed_change_steer"]):
+                print(f"         predicted speed (reader error on held-out unperturbed predictions "
+                      f"{r.get('speed_reader_err', float('nan')):.2f}), median change: steer {r.speed_change_steer:.2f}"
+                      + "".join(f", {k} {r[f'speed_change_{k}']:.2f}" for k in ("permuted", "random")
+                                if f"speed_change_{k}" in r))
             if "pred_err_to_target_deg_steer" in r and pd.notna(r["pred_err_to_target_deg_steer"]):
                 print(f"         predicted future, decoded direction: error to {df.attrs['target']} deg "
                       f"unperturbed {r.pred_err_to_target_deg_unperturbed:.1f}, steer "
@@ -909,6 +921,11 @@ def main(argv=None):
     p.add_argument("--controls", type=int, default=3, help="repeats of each control per video")
     p.add_argument("--scales", default="1,4,16",
                    help="multiples of the difference-of-means shift (controls use the same norms)")
+    p.add_argument("--method", default="mean", choices=["mean", "ring"],
+                   help="mean: difference of condition means; ring: move along a fitted ring")
+    p.add_argument("--harmonics", type=int, default=2, help="harmonics of the ring model (--method ring)")
+    p.add_argument("--sizes", default=None,
+                   help="shift sizes as fractions of each activation's norm, e.g. 0.2,0.4 (replaces --scales)")
     p.add_argument("--raw-targets", action="store_true",
                    help="compare with raw encoder outputs instead of layer-normalised ones "
                         "(V-JEPA's training target is layer-normalised)")
