@@ -87,13 +87,28 @@ def test_planted_importance_and_pull():
 def test_disturb_command_on_tiny_model(tmp_path):
     from physprobe.cli import main
     main(["make", "velocity", "--out", str(tmp_path / "data"), "--grid", "direction_deg=0,90,180,270",
-          "speed=2", "--n-starts", "2"])
+          "speed=2", "--n-starts", "3"])
     main(["extract", "--data", str(tmp_path / "data"), "--out", str(tmp_path / "acts"), "--random-init",
           "--tiny", "--res", "64", "--device", "cpu"])
     main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "d"), "--tiny",
-          "--device", "cpu", "--n", "4", "--controls", "1", "--layers", "1", "--scales", "1,8"])
+          "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--scales", "1,8"])
     s = pd.read_csv(tmp_path / "d" / "disturb_summary.csv")
-    assert set(s.metric) == {"l2", "l1"} and set(s.scale) == {1.0, 8.0} and s.videos.iloc[0] == 4
+    assert set(s.metric) == {"l2", "l1"} and set(s.scale) == {1.0, 8.0} and s.videos.iloc[0] == 8
     assert np.isfinite(s.importance_vs_permuted).all() and np.isfinite(s.pull_vs_random).all()
     rows = pd.read_csv(tmp_path / "d" / "disturb_L1.csv")
     assert set(rows.kind) == {"unperturbed", "steer", "permuted", "random"}
+    assert "pred_dir_deg" in rows.columns
+    main(["disturb-figure", "--run", str(tmp_path / "d"), "--data", str(tmp_path / "data"), "--layer", "1",
+          "--scale", "8", "--examples", "3"])
+    assert (tmp_path / "d" / "disturb_L1_x8.png").stat().st_size > 10_000
+    # explorer: the run is discovered, exported and drawn
+    from physprobe.export import export_bundle
+    from physprobe.gui import data as D
+    from physprobe.gui import figures as F
+    found = D.discover(tmp_path, tmp_path / "data")
+    assert [e["name"] for e in found.steering] == ["d"]
+    bundle = export_bundle(tmp_path, tmp_path.parent / f"{tmp_path.name}_bundle", data=tmp_path / "data",
+                           progress=lambda *_: None)
+    res = D.read_disturb(D.discover(bundle).steering[0]["path"])
+    assert (1, 8.0) in res["figures"] and set(res["summary"].scale) == {1.0, 8.0}
+    assert len(F.steering_doses(res["summary"], 1).data) >= 4

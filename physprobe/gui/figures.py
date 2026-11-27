@@ -350,3 +350,37 @@ def attention_table(df: pd.DataFrame, pez=None):
     fig = _base(fig, 380)
     fig.update_layout(legend=dict(orientation="h", y=-0.22, x=0))
     return fig
+
+
+def steering_doses(summary: pd.DataFrame, layer: int):
+    """Decoded direction of the predicted future (error to the steering target) and
+    pull towards the target video's future, against the size of the shift."""
+    g = summary[(summary.layer == layer) & (summary.metric == "l2")].sort_values("scale")
+    fig = make_subplots(rows=1, cols=2, horizontal_spacing=0.12, subplot_titles=(
+        "Predicted motion: error to the target direction", "Pull towards the target video's future"))
+    x = [f"x{s:g}" for s in g.scale]
+    series = [("unperturbed", "no intervention", NEUTRAL, "dot"), ("steer", "steer", CAT[7], "solid"),
+              ("permuted", "same-size permuted", CAT[0], "dash"), ("random", "same-size random", CAT[2], "dash")]
+    for key, label, color, dash in series:
+        col = f"pred_err_to_target_deg_{key}"
+        if col in g:
+            fig.add_trace(go.Scatter(x=x, y=g[col], mode="lines+markers", name=label, legendgroup=key,
+                                     line=dict(color=color, width=2.4 if key == "steer" else 1.8, dash=dash),
+                                     marker=dict(size=7, line=dict(color="white", width=1)),
+                                     hovertemplate=f"{label}<br>%{{x}}: %{{y:.1f}}°<extra></extra>"), row=1, col=1)
+    for key, label, color in (("permuted", "steer vs permuted", CAT[0]), ("random", "steer vs random", CAT[2])):
+        col = f"pull_vs_{key}"
+        if col in g:
+            fig.add_trace(go.Scatter(x=x, y=g[col], mode="lines+markers", name=label, legendgroup=f"p{key}",
+                                     error_y=dict(type="data", array=g[f"{col}_se"] * 2, color=color, thickness=1),
+                                     line=dict(color=color, width=1.8), marker=dict(size=7),
+                                     hovertemplate=f"{label}<br>%{{x}}: %{{y:+.4f}}<extra></extra>"), row=1, col=2)
+    fig.add_hline(y=0, line=dict(color=MUTED, width=1), row=1, col=2)
+    fig.update_xaxes(title_text="size of the shift (multiple of the difference of means)")
+    fig.update_yaxes(title_text="degrees", rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(title_text="relative change in error", row=1, col=2)
+    for a in fig.layout.annotations:
+        a.font = dict(family=FONT, size=13, color=INK)
+    fig = _base(fig, 400)
+    fig.update_layout(legend=dict(orientation="h", y=-0.3, x=0))
+    return fig
