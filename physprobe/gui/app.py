@@ -458,6 +458,58 @@ def page_attention():
         st.caption("Per-head values require the attn_distance.npz file from the extraction folder.")
 
 
+# ------------------------------------------------------------------- steering
+
+
+def page_steering():
+    st.title("Steering and prediction")
+    lede("Does the model use what the probes read? At one layer, the activity of every video is shifted "
+         "towards a different direction of motion, and V-JEPA 2's predictor forecasts the second half of the "
+         "clip from the first. A model that uses direction should then predict motion in the new direction, "
+         "more than after a shift of the same size that carries no direction (its numbers shuffled, or a random "
+         "direction).")
+    f = found()
+    if not f["steering"]:
+        st.info("No steering runs found. Example command:\n\n```\npython -m physprobe disturb --acts "
+                "runs/vjepa2-l/velocity/acts --data data/velocity --out runs/vjepa2-l/disturb_velocity "
+                "--layers 8 --scales 1,4,16\n```")
+        return
+    names = [e["name"] for e in f["steering"]]
+    name = st.selectbox("Run", names)
+    res = D.read_disturb(f["steering"][names.index(name)]["path"])
+    s = res["summary"]
+    layers = sorted(s.layer.unique())
+    layer = st.selectbox("Layer where the shift is applied", layers, index=len(layers) // 2) if len(layers) > 1 \
+        else layers[0]
+    g = s[(s.layer == layer) & (s.metric == "l2")].sort_values("scale")
+    if "pred_err_to_target_deg_steer" in g:
+        st.plotly_chart(F.steering_doses(s, layer), width="stretch")
+        top = g.iloc[-1]
+        ctrl = [c for c in ("permuted", "random") if f"pred_err_to_target_deg_{c}" in g]
+        st.markdown(
+            f"At the largest shift (x{top.scale:g}, {top.shift_rel:.0%} of the activity's norm), the predicted "
+            f"motion is on average **{top.pred_err_to_target_deg_steer:.0f}°** from the target direction after "
+            f"the steer, against {top.pred_err_to_target_deg_unperturbed:.0f}° without intervention"
+            + "".join(f" and {top[f'pred_err_to_target_deg_{c}']:.0f}° after the same-size {c} shift" for c in ctrl)
+            + f" ({int(top.videos)} videos).")
+    figs = {sc: p for (l, sc), p in res["figures"].items() if l == layer}
+    if figs:
+        sc = max(figs)
+        st.image(figs[sc], caption=f"Example videos at the last frame the model sees, shift x{sc:g}. Green: "
+                 "true motion. Arrows: direction read from the predicted second half (a probe reading of "
+                 "V-JEPA 2's latent prediction, not a rendered frame).")
+    else:
+        st.caption("Example videos with arrows appear here after `python -m physprobe disturb-figure --run "
+                   "<run folder> --data <dataset> --layer <layer> --scale <scale>`.")
+    with st.expander("All numbers"):
+        cols = [c for c in g.columns if not c.endswith("_se")]
+        st.dataframe(g[cols].round(4), width="stretch", hide_index=True)
+        st.caption("Errors are mean squared differences between the predictor's output and the layer-normalised "
+                   "encoder outputs for the second half. importance = (steer error − control error) / "
+                   "unperturbed error; pull = how much closer the steered prediction gets, relative to the "
+                   "control, to the future of a video that really moves in the target direction.")
+
+
 # ------------------------------------------------------------------- datasets
 
 
@@ -584,6 +636,7 @@ pages = [st.Page(page_overview, title="Overview", default=True),
          st.Page(page_probes, title="Probes", url_path="probes"),
          st.Page(page_ablations, title="Attention ablations", url_path="ablations"),
          st.Page(page_attention, title="Attention distance", url_path="attention"),
+         st.Page(page_steering, title="Steering and prediction", url_path="steering"),
          st.Page(page_datasets, title="Datasets", url_path="datasets")]
 nav = st.navigation(pages)
 st.sidebar.markdown(f"[Code on GitHub]({REPO}) · [Findings]({REPO}/blob/main/FINDINGS.md) · "

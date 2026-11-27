@@ -101,3 +101,14 @@ def test_disturb_command_on_tiny_model(tmp_path):
     main(["disturb-figure", "--run", str(tmp_path / "d"), "--data", str(tmp_path / "data"), "--layer", "1",
           "--scale", "8", "--examples", "3"])
     assert (tmp_path / "d" / "disturb_L1_x8.png").stat().st_size > 10_000
+    # explorer: the run is discovered, exported and drawn
+    from physprobe.export import export_bundle
+    from physprobe.gui import data as D
+    from physprobe.gui import figures as F
+    found = D.discover(tmp_path, tmp_path / "data")
+    assert [e["name"] for e in found.steering] == ["d"]
+    bundle = export_bundle(tmp_path, tmp_path.parent / f"{tmp_path.name}_bundle", data=tmp_path / "data",
+                           progress=lambda *_: None)
+    res = D.read_disturb(D.discover(bundle).steering[0]["path"])
+    assert (1, 8.0) in res["figures"] and set(res["summary"].scale) == {1.0, 8.0}
+    assert len(F.steering_doses(res["summary"], 1).data) >= 4
