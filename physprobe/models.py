@@ -103,8 +103,12 @@ class Encoder:
         """V-JEPA 2's rotary position ids are derived from `grid_size`, which the HF
         module fixes from config.crop_size (256 -> 16). Feeding another resolution
         (the paper uses 224 -> 14) without updating it silently mis-assigns every
-        patch's row/column, so keep it in sync with the actual input."""
+        patch's row/column, so keep it in sync with the actual input (in the
+        predictor too, when it is kept)."""
         for b in self.blocks:
+            b.attention.grid_size = g
+        pred = getattr(self.model, "predictor", None)
+        for b in getattr(pred, "layer", []) or []:
             b.attention.grid_size = g
         self.G = g
 
@@ -216,6 +220,46 @@ class Encoder:
             res["attn_temporal"] = stats["temporal"].cpu().numpy()
         return res
 
+    # ---------------------------------------------------------------- predictor
+    @torch.no_grad()
+    def predict(self, videos, context_tubelets: int, edits: dict | None = None,
+                preprocessed: bool = False):
+        """Encoder pass (optionally with residual edits, as in `run`) followed by the
+        V-JEPA 2 predictor: the encoder outputs of the first `context_tubelets`
+        tubelets are the context, every later token is a prediction target.
+        Returns float32 CPU tensors 'tokens' [B, N, d] (final encoder outputs, the
+        prediction targets of an unedited pass) and 'pred' [B, N_target, d], plus the
+        token indices 'target_ids'."""
+        pred_mod = getattr(self.model, "predictor", None)
+        if self.kind != "vjepa2" or pred_mod is None or isinstance(pred_mod, torch.nn.Identity):
+            raise RuntimeError("load the encoder with keep_predictor=True (V-JEPA 2 only)")
+        x = videos if preprocessed else self.preprocess(videos)
+        B, T = x.shape[:2]
+        Tt, G, _ = self.grid(T)
+        if not 0 < context_tubelets < Tt:
+            raise ValueError(f"context_tubelets must be in 1..{Tt - 1}")
+        handles = []
+        for i, fn in (edits or {}).items():
+            def hook(_m, _inp, output, fn=fn):
+                h = output[0] if isinstance(output, (tuple, list)) else output
+                new = fn(h)
+                if isinstance(output, tuple):
+                    return (new,) + tuple(output[1:])
+                if isinstance(output, list):
+                    return [new] + list(output[1:])
+                return new
+            handles.append(self.blocks[i].register_forward_hook(hook))
+        try:
+            seq = self.enc(pixel_values_videos=x).last_hidden_state
+        finally:
+            for h in handles:
+                h.remove()
+        n_ctx = context_tubelets * G * G
+        ids = torch.arange(Tt * G * G, device=seq.device)
+        ctx, tgt = ids[:n_ctx].repeat(B, 1), ids[n_ctx:].repeat(B, 1)
+        p = pred_mod(encoder_hidden_states=seq, context_mask=[ctx], target_mask=[tgt]).last_hidden_state
+        return {"tokens": seq.float().cpu(), "pred": p.float().cpu(), "target_ids": ids[n_ctx:].cpu()}
+
     # ---------------------------------------------------------------- attention
     @contextlib.contextmanager
     def _attention_taps(self, n_frames: int, edit: AttnEdit | None, record: bool):
@@ -283,13 +327,16 @@ class Encoder:
 
 
 def load_encoder(name: str = "vjepa2-l", res: int = 224, device: str | None = None,
-                 dtype: str = "auto", random_init: bool = False, tiny: bool = False) -> Encoder:
+                 dtype: str = "auto", random_init: bool = False, tiny: bool = False,
+                 keep_predictor: bool = False) -> Encoder:
     """Load a frozen encoder.
 
     name: alias in ALIASES, a Hugging Face repo id, or a local directory.
     random_init: build the architecture without downloading weights (pipeline
                  testing and the 'untrained network' control).
     tiny: with random_init, a 4-layer / 96-dim V-JEPA 2 (fast CPU smoke tests).
+    keep_predictor: keep V-JEPA 2's predictor (for `Encoder.predict`); otherwise it is
+                 dropped to save memory.
     """
     import transformers
     repo = ALIASES.get(name, name)
@@ -322,6 +369,6 @@ def load_encoder(name: str = "vjepa2-l", res: int = 224, device: str | None = No
     else:
         cls = transformers.VideoMAEModel if kind == "videomae" else transformers.AutoModel
         model = cls.from_pretrained(repo)
-    if kind == "vjepa2" and hasattr(model, "predictor"):
+    if kind == "vjepa2" and hasattr(model, "predictor") and not keep_predictor:
         model.predictor = torch.nn.Identity()  # only the encoder is analysed
     return Encoder(model, kind, res, device, td, name=name)
