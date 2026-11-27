@@ -83,3 +83,17 @@ def test_planted_importance_and_pull():
     assert s.loc["l2", "pull_vs_permuted"] > 0.5  # the prediction moves to the target future
     np.testing.assert_allclose(df[df.condition == "unperturbed"].l2, 0.25, atol=1e-6)
 
+
+def test_disturb_command_on_tiny_model(tmp_path):
+    from physprobe.cli import main
+    main(["make", "velocity", "--out", str(tmp_path / "data"), "--grid", "direction_deg=0,90,180,270",
+          "speed=2", "--n-starts", "2"])
+    main(["extract", "--data", str(tmp_path / "data"), "--out", str(tmp_path / "acts"), "--random-init",
+          "--tiny", "--res", "64", "--device", "cpu"])
+    main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "d"), "--tiny",
+          "--device", "cpu", "--n", "4", "--controls", "1", "--layers", "1"])
+    s = pd.read_csv(tmp_path / "d" / "disturb_summary.csv")
+    assert set(s.metric) == {"l2", "l1"} and s.videos.iloc[0] == 4
+    assert np.isfinite(s.importance_vs_permuted).all() and np.isfinite(s.pull_vs_random).all()
+    rows = pd.read_csv(tmp_path / "d" / "disturb_L1.csv")
+    assert set(rows.kind) == {"unperturbed", "steer", "permuted", "random"}

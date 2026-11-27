@@ -394,6 +394,61 @@ def _steer_propagate(a, c, l, t, seq, levels, mus, out):
     print(df.round(1).to_string(index=False))
 
 
+# ------------------------------------------------------------------------ disturb
+
+
+def cmd_disturb(a):
+    """Does shifting a variable change the predictor's view of the future more than a
+    same-size uninformative disturbance? (see physprobe/disturb.py)"""
+    from tqdm import tqdm
+    from . import disturb
+    from .datasets import VideoDataset
+    from .extract import ActivationCache, parse_layers
+    from .models import load_encoder
+    c = ActivationCache(a.acts)
+    out = _out(a.out)
+    ds = VideoDataset(a.data or c.meta["dataset"])
+    res = a.res or c.meta.get("res", 224)
+    name = a.model or c.meta.get("model", "vjepa2-l")
+    random_init = a.random_init or name.endswith("-random")  # an untrained-network cache
+    enc = load_encoder(name.removesuffix("-random"), res, a.device, a.dtype, random_init, a.tiny,
+                       keep_predictor=True)
+    if enc.n_layers != c.n_layers:
+        raise SystemExit(f"cache has {c.n_layers} layers, model has {enc.n_layers}: use the same model")
+    layers = parse_layers(a.layers, c.n_layers) if a.layers else [c.pez]
+    vals = c.labels[a.col].to_numpy()
+    _, near = disturb.condition_shifts(c.layer(layers[0]), vals, a.target)
+    pool = np.where(vals != near)[0]  # videos already at the target value get no shift
+    ids = np.sort(np.random.default_rng(a.seed).permutation(pool)[:a.n])
+    summaries = []
+    for l in layers:
+        bar = tqdm(total=-(-len(ids) // a.batch_size), desc=f"disturb L{l}", unit="batch")
+        df = disturb.run(enc, ds, c, l, a.col, a.target, ids, a.context, a.controls,
+                         batch_size=a.batch_size, seed=a.seed, frames=a.frames,
+                         match_cols=a.match, progress=lambda i, n: bar.update(1))
+        bar.close()
+        df.to_csv(out / f"disturb_L{l}.csv", index=False)
+        sm = disturb.summarize(df)
+        sm.insert(0, "layer", l)
+        summaries.append(sm)
+        r = sm[sm.metric == "l2"].iloc[0]
+        print(f"\nlayer {l}: shift to {a.col} = {df.attrs['target']} in {r.videos} videos, "
+              f"|shift| / |activation| = {r.shift_rel:.3f}; context {df.attrs['context_tubelets']} of "
+              f"{df.attrs['tubelets']} tubelets")
+        print(f"  prediction error (L2) unperturbed {r.unperturbed:.4f}   steer {r.steer:.4f}   "
+              + "   ".join(f"{k} {r[k]:.4f}" for k in ("permuted", "random") if k in r))
+        for k in ("permuted", "random"):
+            if f"importance_vs_{k}" in r:
+                line = (f"  vs {k:8s}: importance {r[f'importance_vs_{k}']:+.4f} "
+                        f"(+/- {r[f'importance_vs_{k}_se']:.4f} s.e.), steer worse in "
+                        f"{r[f'steer_worse_than_{k}_frac']:.0%} of videos")
+                if f"pull_vs_{k}" in r:
+                    line += f"; pull towards the target future {r[f'pull_vs_{k}']:+.4f} (+/- {r[f'pull_vs_{k}_se']:.4f})"
+                print(line)
+    pd.concat(summaries).to_csv(out / "disturb_summary.csv", index=False)
+    print(f"-> {out}/disturb_summary.csv, disturb_L*.csv")
+
+
 # ------------------------------------------------------------------------- ablate
 
 PAPER_ABLATIONS = {"spatial s=7": (7.0, None), "temporal t=3": (None, 3), "combined s=3,t=1": (3.0, 1)}
@@ -818,6 +873,31 @@ def main(argv=None):
     p.add_argument("--layer", type=int, default=None, help="layer for the detailed figure")
     p.add_argument("--thr", type=float, default=0.1, help="delta R^2 that counts as tuned")
     p.set_defaults(fn=cmd_tuning)
+
+    p = sub.add_parser("disturb", help="functional importance: does a shift of a variable change "
+                                       "the predictor's prediction more than a same-size control?")
+    p.add_argument("--acts", required=True, help="activation cache of the dataset (pooled.npy)")
+    p.add_argument("--out", required=True)
+    p.add_argument("--data", default=None, help="dataset folder (default: the cache's)")
+    p.add_argument("--col", default="direction_deg", help="variable to shift")
+    p.add_argument("--target", type=float, default=90.0, help="value to shift towards (nearest level)")
+    p.add_argument("--layers", default=None, help="injection layers, e.g. 4,8,12 (default: one-third depth)")
+    p.add_argument("--context", type=int, default=None,
+                   help="tubelets given to the predictor as context (default: first half)")
+    p.add_argument("--n", type=int, default=48, help="videos (random subset)")
+    p.add_argument("--controls", type=int, default=3, help="repeats of each control per video")
+    p.add_argument("--match", nargs="*", default=["speed", "start_id"],
+                   help="factors held fixed to find the steered video's real future (pull)")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--model", default=None, help="default: the cache's model")
+    p.add_argument("--res", type=int, default=None, help="default: the cache's resolution")
+    p.add_argument("--device", default=None)
+    p.add_argument("--dtype", default="auto", choices=["auto", "float32", "float16", "bfloat16"])
+    p.add_argument("--batch-size", type=int, default=4)
+    p.add_argument("--frames", type=int, default=None)
+    p.add_argument("--random-init", action="store_true")
+    p.add_argument("--tiny", action="store_true")
+    p.set_defaults(fn=cmd_disturb)
 
     p = sub.add_parser("steer", help="subspace steering of a circular variable")
     p.add_argument("--acts", required=True)
