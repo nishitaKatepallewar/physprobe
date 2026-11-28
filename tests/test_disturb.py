@@ -83,6 +83,7 @@ def test_flip_gap():
     r = disturb.flip(pd.DataFrame(rows)).iloc[0]
     assert r.flip_unperturbed == 0 and r.flip_steer == 1 and r.flip_permuted == 0
     assert abs(r.gap_closed_steer - 1.5) < 1e-9 and abs(r.gap_closed_permuted - 0.1) < 1e-9
+    assert np.isnan(r.flip_z_vs_permuted) or r.flip_z_vs_permuted > 0
 
 
 def test_matched_ids():

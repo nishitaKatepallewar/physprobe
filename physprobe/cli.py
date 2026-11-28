@@ -518,13 +518,13 @@ def cmd_disturb_recheck(a):
         fl.to_csv(run / "disturb_flip.csv", index=False)
         print("No reader: is the predicted future closer to the matched target-direction video's real future "
               "than to its own?")
-        kinds = sorted(c[len("gap_closed_"):] for c in fl.columns
-                       if c.startswith("gap_closed_") and not c.endswith("_se"))
         for _, r in fl.iterrows():
+            ctr = sorted(c[len("flip_z_vs_"):] for c in fl.columns if c.startswith("flip_z_vs_"))
             print(f"  layer {int(r.layer)} size {r.scale:g} ({int(r.videos)} videos) flipped: "
-                  + "  ".join(f"{k} {r[f'flip_{k}']:.0%}" for k in ["unperturbed"] + [k for k in kinds if k != "unperturbed"]))
-            print("      gap closed: " + "  ".join(
-                f"{k} {r[f'gap_closed_{k}']:+.2f}±{r[f'gap_closed_{k}_se']:.2f}" for k in kinds))
+                  + "  ".join(f"{k} {r[f'flip_{k}']:.0%}" for k in ["unperturbed", "steer"] + ctr))
+            print("      steer vs control, z: " + "  ".join(f"{k} {r[f'flip_z_vs_{k}']:.1f}" for k in ctr)
+                  + "   | share of mean gap closed: "
+                  + "  ".join(f"{k} {r[f'gap_closed_{k}']:+.2f}" for k in ["steer"] + ctr))
         print(f"-> {run}/disturb_flip.csv")
 
 

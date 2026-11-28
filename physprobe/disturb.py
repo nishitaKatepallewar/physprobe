@@ -453,22 +453,31 @@ def flip(df: pd.DataFrame, metric: str = "l2") -> pd.DataFrame:
     is (error to the target video's real future) - (error to its own real future); it is
     positive when the prediction is closer to its own future. Per scale and condition
     kind: the fraction of predictions that flip (gap < 0, now closer to the target
-    video's future) and the mean fraction of the unperturbed gap that is closed."""
+    video's future), and the paired difference of the steer's flip rate from each
+    control's over videos (controls averaged over repeats per video), with its z.
+    Also the share of the mean unperturbed gap closed (ratio of means, robust to videos
+    whose own gap is near zero)."""
     tm = f"{metric}_to_target"
     if tm not in df:
         return pd.DataFrame()
     d = df[df[tm].notna()].assign(gap=lambda x: x[tm] - x[metric])
+    d = d.assign(flip=(d.gap < 0).astype(float))
     g0 = d[d.kind == "unperturbed"].set_index("video").gap
     out = []
     for sc in sorted(s for s in d.scale.unique() if s > 0):
         part = d[d.scale == sc]
-        r = {"scale": sc, "metric": metric, "videos": int(part.video.nunique()),
+        fv = part.groupby(["video", "kind"]).flip.mean().unstack()
+        gv = part.groupby(["video", "kind"]).gap.mean().unstack()
+        r = {"scale": sc, "metric": metric, "videos": int(len(fv)),
              "flip_unperturbed": float((g0 < 0).mean())}
-        for kind, q in part.groupby("kind"):
-            r[f"flip_{kind}"] = float((q.gap < 0).mean())
-            per = q.groupby("video").gap.mean()
-            closed = 1 - per / g0.reindex(per.index)
-            r[f"gap_closed_{kind}"] = float(closed.mean())
-            r[f"gap_closed_{kind}_se"] = float(closed.std(ddof=1) / np.sqrt(closed.notna().sum()))
+        for kind in fv.columns:
+            r[f"flip_{kind}"] = float(fv[kind].mean())
+            r[f"gap_closed_{kind}"] = float(1 - gv[kind].mean() / g0.reindex(gv.index).mean())
+        for kind in fv.columns:
+            if kind == "steer":
+                continue
+            diff = fv["steer"] - fv[kind]
+            se = diff.std(ddof=1) / np.sqrt(diff.notna().sum())
+            r[f"flip_z_vs_{kind}"] = float(diff.mean() / se) if se > 0 else np.nan
         out.append(r)
     return pd.DataFrame(out)
