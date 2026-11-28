@@ -66,12 +66,14 @@ here, not errors in the paper.
    the real future of a matched video moving in the target direction. With the paper's subspace
    steer at layer 8 (20 or 35 probes), a probe at layer 8 reads the target (110° → 5° error), but
    the predicted future does not move towards the target video's future (ordinary videos,
-   approach z = −1.2; shift 2–3% of the activation norm). Pushes 4 and 16 times larger change it
-   by small amounts (approach z −2.6 and −1.7) without beating both controls. A ring-shaped steer
-   of 40% of the activation norm moves predictions closer to the target video's future in 2 of 4
-   runs (0° and one 90° run), not in a second 90° run, and away from it at 225°. On stepped videos
-   no steer tested, at layers 8–18, moves predictions towards the target video's future more than
-   towards their own. Readouts of the predicted future can mislead: on stepped videos
+   approach z = −1.2; shift 2–3% of the activation norm). Pushes 4 and 16 times larger do not
+   pass the decision rule either. A ring-shaped steer at layer 8 passes on one sample of 32
+   videos at 90° (at 10%, 20% and 40% of the activation norm) and on a second sample of 48 videos
+   at 0°, but fails on that second sample at 90° and 225°; at layers 4, 6, 10 and 12 it fails.
+   On stepped videos one condition passes (the paper's steer pushed 16 times harder), but the
+   direction read from the predictions does not change and no more predictions move towards the
+   target video's future than without steering, so it is not counted as steering direction.
+   Readouts of the predicted future can mislead: on stepped videos
    at layer 14 a linear reader read the steered predictions as 32° from the target while the
    predictions moved away from the target video's future. See Results 7.
 
@@ -141,11 +143,14 @@ analysis. (The predictor is used here only for the steering test in Results 7.)
   labels. Measures, against layer-normalised encoder outputs: error to the video's own future;
   error to the future of the matched video (same speed and start, target direction); and the
   direction read from the predicted future by leave-one-video-out linear and nearest-neighbour
-  readers. Decision rule: the reader works (held-out error ≤ 45°), the steer brings the
-  prediction closer to the target video's future than no steering does (z ≤ −2), and closer than
-  every control does (z ≥ 2). An earlier version of the rule used the last condition only; it
-  counts a steer that merely damages the prediction less than the controls as a success, and was
-  replaced. 32–48 steered videos per run, target 90° unless stated.
+  readers. Decision rule: the reader works (held-out error ≤ 45°); the steer brings the
+  prediction closer to the target video's future than no steering does ("approach", z ≤ −2);
+  closer to it relative to the video's own future, so the gap between the two errors shrinks
+  ("gap", z ≤ −2); and closer to it than every control does ("pull", z ≥ 2). The rule was
+  changed twice after results were seen: it began as pull alone, which counts a steer that only
+  damages the prediction less than the controls; approach was added, which counts an edit that
+  improves the prediction towards every future alike; then gap. 32–48 steered videos per run,
+  target 90° unless stated.
 - **Shapes**: condition means per value; split-half reliability across start positions;
   noise-corrected harmonic content and dimensionality; statistics omitted where reliability < 0.3.
 
@@ -310,20 +315,27 @@ the target video's future relative to no steering (z over videos; negative = clo
 change in error to the video's own future (positive = further). Pull compares the steer with the
 permuted and random controls (z ≥ 2 = closer than the control).
 
-| Steer | Size (× activation norm) | Probe at layer 8, error to target | Approach z | Own z | Pull z (permuted, random) |
-|---|---|---|---|---|---|
-| paper subspace, 20 probes, ×1 | 0.02 | 4.9° | −1.2 | +2.0 | −0.1, −0.8 |
-| paper subspace, 20 probes, ×4 | 0.09 | – | −2.6 | +1.4 | +1.6, +2.2 |
-| paper subspace, 20 probes, ×16 | 0.36 | – | −1.7 | +6.5 | +6.0, +5.1 |
-| paper subspace, 35 probes, ×1 / ×4 / ×16 | 0.03 / 0.11 / 0.44 | 5.0° (×1) | not computed | not computed | +0.9, −0.6 / +2.6, +2.2 / +2.2, +1.8 |
-| ring, 90° (seed 0, 32 videos) | 0.40 | – | −3.3 | +4.1 | +10.4, +8.8 |
-| ring, 0° (seed 1, 48 videos) | 0.40 | – | −3.8 | +11.7 | 11.2–12.6* |
-| ring, 90° (seed 1, 48 videos) | 0.40 | – | −1.6 | +6.1 | 8.7–12.9* |
-| ring, 225° (seed 1, 48 videos) | 0.40 | – | +3.3 | +15.9 | 3.8–7.4* |
-| stepped: paper subspace, 20 probes, ×1 / ×4 / ×16 | 0.01 / 0.05 / 0.18 | 15.7° (×1) | −4.2 / −5.2 / −6.4 | −4.8 / −5.7 / −6.2 | +1.6, +0.5 / +3.4, +3.6 / +4.4, +5.1 |
-| stepped: ring, layers 10 / 14 / 18 | 0.40 | – | +10.6 / +12.8 / +13.1 | +11.4 / +19.4 / +23.6 | −4.6, −7.4 / −3.1, −3.8 / −0.7, −1.2 |
+| Steer | Size (× activation norm) | Probe at layer 8, error to target | Approach z | Gap z | Pull z (permuted, random) | Rule |
+|---|---|---|---|---|---|---|
+| paper subspace, 20 probes, ×1 / ×4 / ×16 | 0.02 / 0.09 / 0.36 | 4.9° (×1) | −1.2 / −2.6 / −1.7 | −2.4 / −3.0 / −5.9 | −0.1, −0.8 / +1.6, +2.2 / +6.0, +5.1 | fail / fail / fail |
+| paper subspace, 35 probes, ×1 / ×4 / ×16 | 0.03 / 0.11 / 0.44 | 5.0° (×1) | −0.8 / −1.7 / +2.9 | −1.2 / −2.6 / −4.7 | +0.9, −0.6 / +2.6, +2.2 / +2.2, +1.8 | fail / fail / fail |
+| ring, 90°, sample A (seed 0, 32 videos), sizes 0.1 / 0.2 / 0.4 | 0.1 / 0.2 / 0.4 | – | −3.8 / −4.2 / −3.3 | −5.2 / −6.6 / −9.0 | +4.8, +2.2 / +8.0, +5.2 / +10.4, +8.8 | pass / pass / pass |
+| ring, 0°, sample B (seed 1, 48 videos) | 0.40 | – | −3.8 | −11.4 | 11.2–12.6* | pass |
+| ring, 90°, sample B | 0.40 | – | −1.6 | −9.3 | 8.7–12.9* | fail |
+| ring, 225°, sample B | 0.40 | – | +3.3 | −8.0 | 3.8–7.4* | fail |
+| ring, 90°, sample A, layers 4 / 6 / 10 / 12 | 0.40 | – | +9.4 / −1.4 / +5.3 / +2.7 | −0.8 / −8.6 / −5.9 / −12.1 | −0.3, +0.9 / +8.5, +6.4 / −0.6, −1.5 / +1.5, +1.7 | fail at all four |
+| ring fitted on stepped videos, applied here | 0.40 | – | +8.3 | +1.4 | −2.2, −3.8 | fail |
+| stepped: paper subspace, 20 probes, ×1 / ×4 / ×16 | 0.01 / 0.05 / 0.18 | 15.7° (×1) | −4.2 / −5.2 / −6.4 | −0.5 / −0.5 / −3.2 | +1.6, +0.5 / +3.4, +3.6 / +4.4, +5.1 | fail / fail / pass† |
+| stepped: ring, layers 10 / 14 / 18 | 0.40 | – | +10.6 / +12.8 / +13.1 | −3.1 / −7.6 / −9.1 | −4.6, −7.4 / −3.1, −3.8 / −0.7, −1.2 | fail at all three |
 
 \* Range over the permuted, random and shuffled-label controls, transcribed from the runs' summaries.
+† Not supported by the other measures: the direction read from these predictions is 116° from the
+target (114° unsteered) and the share of predictions closer to the target video's future than to
+their own is unchanged (28%).
+
+Sample A is one random draw of 32 videos; its three ring runs at layer 8 and 90° (the 0.4 run was
+repeated) use the same videos, so they are not independent replications. Sample B is a second
+draw of 48 videos.
 
 - At the size the paper's method produces, the predicted future is unchanged in every measure
   (direction read from it: 106° from the target, against 109° unsteered; 3% of predictions
@@ -336,9 +348,10 @@ permuted and random controls (z ≥ 2 = closer than the control).
   amounts, which is not specific to direction; the direction read from the predictions does not
   change (113–116° against 114°).
 - The ring steer moves predictions away from their own future in every run, but towards the
-  target video's future only at 0° and in one of two 90° runs. The two 90° runs differ in seed and
-  in the videos sampled. Whether this is a real but target-dependent effect or noise is not
-  settled.
+  target video's future only on sample A at 90° and on sample B at 0°. On sample B at 90° the
+  approach is in the same direction but weaker (z −1.6). Whether this is a real but
+  sample- and target-dependent effect or noise is not settled; a run on all 392 videos at
+  several targets would decide it.
 - A ring fitted on stepped videos and applied to ordinary videos does not steer them (pull z
   −2.2, −3.8; no predictions flip towards the target video). At layer 8 the direction ring
   accounts for 31% of the held-out activation variance on ordinary videos and 5% on stepped
@@ -352,8 +365,9 @@ permuted and random controls (z ≥ 2 = closer than the control).
   reads unperturbed predictions only to 38–44° on ordinary videos and 61° on stepped videos, so it
   is a weak check. On ordinary videos it reads the ring steer at 0° as 66° from the target
   (controls 76–91°) and at 90° as 73° and 101° in the two runs (controls 92–98° and 112°).
-- An earlier layer sweep of the ring steer (layers 4–12, target 90°, judged by pull alone) passed
-  at layers 6 and 8 and failed at 4, 10 and 12. It has not been re-judged with the approach measure.
+- In the layer sweep (sample A, 90°), only layer 8 passes. Layer 6 beats the controls on pull and
+  gap but does not bring predictions closer to the target video's future than no steering
+  (approach z −1.4); with pull alone it had passed.
 
 Numbers: [`docs/results/steering_through_predictor.csv`](docs/results/steering_through_predictor.csv)
 (transcribed). An interpretation consistent with these results, not tested directly: on ordinary
@@ -389,9 +403,11 @@ itself is not yet established.
   can thin out the single frame where a possible and an impossible video first differ),
   cross-validation groups, how IntPhys accuracy is scored, probe epochs, the meaning of
   "combined", which layers are read out after ablation, and which heads are ablated (all).
-- **The decision rule for Results 7 changed during the analysis.** It started as pull alone and
-  became pull plus approach after the runs showed that pull rewards less damage. All measures
-  are reported so either rule can be applied; the change was made after seeing data.
+- **The decision rule for Results 7 changed twice after seeing data** (pull alone; then with
+  approach; then with gap; see Methods). Each change closed a way of passing without steering,
+  and each was prompted by a specific run. All measures are reported so any version of the rule
+  can be applied. A rule fixed before new data is still needed: the next runs should be judged
+  by the current rule without further changes.
 - **Steering tests are small.** 32–48 steered videos per run, single seeds per condition,
   three targets; the edit is the same vector added to every token, which is a crude edit and
   does not target the ball's tokens. Results 7 is a negative result about effects of this size

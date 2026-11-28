@@ -327,6 +327,11 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
                 ow = w[metric]["steer"] - b
                 r["away_from_own"] = ow.mean()
                 r["away_from_own_se"] = ow.std(ddof=1) / np.sqrt(ow.notna().sum())
+                # specificity: closer to the target video's future relative to the own
+                # future (change in the gap; negative = the gap shrinks)
+                sp = ap - ow
+                r["specific"] = sp.mean()
+                r["specific_se"] = sp.std(ddof=1) / np.sqrt(sp.notna().sum())
             for kind in kinds:
                 r[kind] = w[metric][kind].mean()
                 fi = (w[metric]["steer"] - w[metric][kind]) / b
@@ -458,6 +463,9 @@ def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45
       - the reader reads held-out predictions to within reader_max_deg;
       - approach: the steer brings the prediction closer to the real future of the
         matched target-direction video than no steering does (z <= -n_se);
+      - specific: it gets closer to that future relative to the video's own future,
+        i.e. the gap between the two shrinks (z <= -n_se); an edit that improves the
+        prediction towards every future alike is not steering direction;
       - pull: closer to that future than every control (z >= n_se).
     Pull alone is not enough: controls that damage the prediction more make a steer
     that damages it less look like a pull. (The first version of this rule used pull
@@ -472,9 +480,12 @@ def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45
         has_ap = "approach" in r.index and pd.notna(r.get("approach"))
         ap_z = r["approach"] / r["approach_se"] if has_ap and r["approach_se"] > 0 else np.nan
         approaches = bool(has_ap and ap_z <= -n_se)
-        ok = reader_ok and beats and (approaches if has_ap else True)
+        has_sp = "specific" in r.index and pd.notna(r.get("specific"))
+        sp_z = r["specific"] / r["specific_se"] if has_sp and r["specific_se"] > 0 else np.nan
+        specific = bool(has_sp and sp_z <= -n_se)
+        ok = reader_ok and beats and (approaches if has_ap else True) and (specific if has_sp else True)
         out.append({"layer": r.get("layer"), "size": r.scale, "reader_err_deg": r.get("reader_err_deg"),
-                    "reader_ok": reader_ok, "approach_z": ap_z,
+                    "reader_ok": reader_ok, "approach_z": ap_z, "specific_z": sp_z,
                     **{f"pull_z_vs_{c}": m for c, m in margins.items()},
                     "verdict": "NO VERDICT (reader too weak)" if not reader_ok else
                                ("PASS" if ok else "FAIL") + ("" if has_ap else " (pull only)")})
