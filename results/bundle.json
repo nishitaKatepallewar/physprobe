@@ -1,11 +1,11 @@
 {
   "format": "physprobe-bundle",
   "version": 1,
-  "created": "2026-11-28 15:16:54",
+  "created": "2026-11-28 18:56:00",
   "source": "runs",
   "activation_sets": 26,
   "shapes": 49,
   "probe_runs": 49,
   "ablation_runs": 6,
-  "steering_runs": 13
+  "steering_runs": 19
 }
