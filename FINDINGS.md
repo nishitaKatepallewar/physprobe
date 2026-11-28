@@ -60,6 +60,20 @@ here, not errors in the paper.
    0.58 at layer 8 and 0.68 at best. The paper does not state how its accuracy is scored, so the
    match depends on that inference. The decline toward the output that the paper reports is not
    seen.
+9. **Steering direction makes direction probes read the target, but has not been shown to make
+   the model predict motion in the target direction.** Here an edit is passed through the rest
+   of the encoder and through V-JEPA 2's predictor, and the predicted future is compared with
+   the real future of a matched video moving in the target direction. With the paper's subspace
+   steer at layer 8 (20 or 35 probes), a probe at layer 8 reads the target (110° → 5° error), but
+   the predicted future does not move towards the target video's future (ordinary videos,
+   approach z = −1.2; shift 2–3% of the activation norm). Pushes 4 and 16 times larger change it
+   by small amounts (approach z −2.6 and −1.7) without beating both controls. A ring-shaped steer
+   of 40% of the activation norm moves predictions closer to the target video's future in 2 of 4
+   runs (0° and one 90° run), not in a second 90° run, and away from it at 225°. On stepped videos
+   no steer tested, at layers 8–18, moves predictions towards the target video's future more than
+   towards their own. Readouts of the predicted future can mislead: on stepped videos
+   at layer 14 a linear reader read the steered predictions as 32° from the target while the
+   predictions moved away from the target video's future. See Results 7.
 
 All results come from single runs (one seed, one cross-validation split per fold).
 
@@ -77,10 +91,12 @@ All results come from single runs (one seed, one cross-validation split per fold
 | One probe cannot steer direction; ~20 can (82.9° → 11.9°) | 1 probe: 82–86°; 10–20 probes: 4–6° | reproduced |
 | Direction and violation-of-expectation subspaces are near-orthogonal (69–75°) | IntPhys: 73–74° against 75–76° for random subspaces of the same sizes; `permanence`: 63–75° against 73–76° | not distinguishable from random subspaces; the IntPhys probe inside this analysis scores only 0.53–0.56 |
 | IntPhys possible vs impossible: chance early, about 85–95% at about one-third depth | paired: 0.54 at layer 0, 0.82 at layer 8, 0.91 at layers 11–12; per video: 0.52, 0.58, 0.65 | reproduced with paired scoring; not per video. The paper's scoring is not stated |
+| Steering ~20 probes at layer 8 controls direction (evaluated by a probe at layer 8) | same at layer 8 (110° → 5°); passed through the predictor, the predicted future does not move towards the target direction | readout reproduced; an effect on the model's predictions not found |
 | ... peaking mid-network and declining toward the output | paired: 0.85–0.91 from layer 10 to 23 | decline not reproduced |
 
 Not tested: V-JEPA 2-H and -g, VideoMAE-v2, the CLEVRER / ImageNet / Something-Something-v2
-controls, attentive probes on IntPhys, and the predictor-based analyses.
+controls, attentive probes on IntPhys, and the paper's predictor-based violation-of-expectation
+analysis. (The predictor is used here only for the steering test in Results 7.)
 
 ## Methods in brief
 
@@ -115,6 +131,21 @@ controls, attentive probes on IntPhys, and the predictor-based analyses.
   the activations it scores ("strict"). The difference-of-means control shifts each activation by
   (target-condition mean − own-condition mean), restricted to the top 2 or all 7 principal axes of
   the condition means.
+- **Steering through the predictor** (`physprobe disturb`, following the logic of Thorat et al.,
+  [arXiv:2111.07898](https://arxiv.org/abs/2111.07898)): the encoder sees all 8 tubelets, an edit
+  is added to every token at one layer, and the predictor predicts tubelets 5–8 from 1–4. Edits:
+  the paper's subspace steer (probe sequence fitted on videos that are not steered), a ring steer
+  (moves each video's angle on a least-squares ring of two harmonics, keeping its residual), or a
+  difference of condition means. Controls of the same norm per video: the steer's elements
+  permuted, a random direction, and (ring and mean only) the same steer built from shuffled
+  labels. Measures, against layer-normalised encoder outputs: error to the video's own future;
+  error to the future of the matched video (same speed and start, target direction); and the
+  direction read from the predicted future by leave-one-video-out linear and nearest-neighbour
+  readers. Decision rule: the reader works (held-out error ≤ 45°), the steer brings the
+  prediction closer to the target video's future than no steering does (z ≤ −2), and closer than
+  every control does (z ≥ 2). An earlier version of the rule used the last condition only; it
+  counts a steer that merely damages the prediction less than the controls as a success, and was
+  replaced. 32–48 steered videos per run, target 90° unless stated.
 - **Shapes**: condition means per value; split-half reliability across start positions;
   noise-corrected harmonic content and dimensionality; statistics omitted where reliability < 0.3.
 
@@ -272,6 +303,63 @@ opposite label is then in the training set; leakage of that kind does not explai
 higher numbers. A logistic probe with fixed regularisation gives the same paired curve within 0.03 from layer 8
 on and within 0.06 at layers 5–7 (`docs/results/intphys_scoring_check.csv`).
 
+### 7. Does the predictor use direction?
+
+Layer 8, ordinary (`velocity`) videos unless stated. "Approach" is the steer's change in error to
+the target video's future relative to no steering (z over videos; negative = closer). "Own" is the
+change in error to the video's own future (positive = further). Pull compares the steer with the
+permuted and random controls (z ≥ 2 = closer than the control).
+
+| Steer | Size (× activation norm) | Probe at layer 8, error to target | Approach z | Own z | Pull z (permuted, random) |
+|---|---|---|---|---|---|
+| paper subspace, 20 probes, ×1 | 0.02 | 4.9° | −1.2 | +2.0 | −0.1, −0.8 |
+| paper subspace, 20 probes, ×4 | 0.09 | – | −2.6 | +1.4 | +1.6, +2.2 |
+| paper subspace, 20 probes, ×16 | 0.36 | – | −1.7 | +6.5 | +6.0, +5.1 |
+| paper subspace, 35 probes, ×1 / ×4 / ×16 | 0.03 / 0.11 / 0.44 | 5.0° (×1) | not computed | not computed | +0.9, −0.6 / +2.6, +2.2 / +2.2, +1.8 |
+| ring, 90° (seed 0, 32 videos) | 0.40 | – | −3.3 | +4.1 | +10.4, +8.8 |
+| ring, 0° (seed 1, 48 videos) | 0.40 | – | −3.8 | +11.7 | 11.2–12.6* |
+| ring, 90° (seed 1, 48 videos) | 0.40 | – | −1.6 | +6.1 | 8.7–12.9* |
+| ring, 225° (seed 1, 48 videos) | 0.40 | – | +3.3 | +15.9 | 3.8–7.4* |
+| stepped: paper subspace, 20 probes, ×1 / ×4 / ×16 | 0.01 / 0.05 / 0.18 | 15.7° (×1) | −4.2 / −5.2 / −6.4 | −4.8 / −5.7 / −6.2 | +1.6, +0.5 / +3.4, +3.6 / +4.4, +5.1 |
+| stepped: ring, layers 10 / 14 / 18 | 0.40 | – | +10.6 / +12.8 / +13.1 | +11.4 / +19.4 / +23.6 | −4.6, −7.4 / −3.1, −3.8 / −0.7, −1.2 |
+
+\* Range over the permuted, random and shuffled-label controls, transcribed from the runs' summaries.
+
+- At the size the paper's method produces, the predicted future is unchanged in every measure
+  (direction read from it: 106° from the target, against 109° unsteered; 3% of predictions
+  closer to the target video's future than to their own, as without steering).
+- Almost every steer that beats a control on pull also damages the prediction less than that
+  control (the exception: stepped videos, layer 18, against the shuffled-label control). Pull
+  alone therefore cannot separate "moves towards the target" from "does less damage"; the
+  approach column is the measure that does.
+- On stepped videos the paper's steer brings predictions closer to *both* futures by similar
+  amounts, which is not specific to direction; the direction read from the predictions does not
+  change (113–116° against 114°).
+- The ring steer moves predictions away from their own future in every run, but towards the
+  target video's future only at 0° and in one of two 90° runs. The two 90° runs differ in seed and
+  in the videos sampled. Whether this is a real but target-dependent effect or noise is not
+  settled.
+- A ring fitted on stepped videos and applied to ordinary videos does not steer them (pull z
+  −2.2, −3.8; no predictions flip towards the target video). At layer 8 the direction ring
+  accounts for 31% of the held-out activation variance on ordinary videos and 5% on stepped
+  videos; the two rings' 4-dimensional spans are at a mean principal angle of 62° (87° for random
+  subspaces). They are partly shared, mostly different.
+- On stepped videos at layer 14 the linear reader read the ring-steered predictions as 32° from
+  the target (controls 101–113°) while the predictions moved away from the target video's
+  future. A readout of a steered representation is therefore weak evidence that the model uses
+  what was steered.
+- A nearest-neighbour reader of the predicted future (cosine, 5 neighbours, leave one video out)
+  reads unperturbed predictions only to 38–44° on ordinary videos and 61° on stepped videos, so it
+  is a weak check. On ordinary videos it reads the ring steer at 0° as 66° from the target
+  (controls 76–91°) and at 90° as 73° and 101° in the two runs (controls 92–98° and 112°).
+- An earlier layer sweep of the ring steer (layers 4–12, target 90°, judged by pull alone) passed
+  at layers 6 and 8 and failed at 4, 10 and 12. It has not been re-judged with the approach measure.
+
+Numbers: [`docs/results/steering_through_predictor.csv`](docs/results/steering_through_predictor.csv)
+(transcribed). An interpretation consistent with these results, not tested directly: on ordinary
+videos the steerable direction code relies on motion within tokens; but the ordinary-video effect
+itself is not yet established.
+
 ## Limitations and open questions
 
 - **Stepped videos are out of distribution.** Natural video never freezes for two frames, so the
@@ -301,6 +389,13 @@ on and within 0.06 at layers 5–7 (`docs/results/intphys_scoring_check.csv`).
   can thin out the single frame where a possible and an impossible video first differ),
   cross-validation groups, how IntPhys accuracy is scored, probe epochs, the meaning of
   "combined", which layers are read out after ablation, and which heads are ablated (all).
+- **The decision rule for Results 7 changed during the analysis.** It started as pull alone and
+  became pull plus approach after the runs showed that pull rewards less damage. All measures
+  are reported so either rule can be applied; the change was made after seeing data.
+- **Steering tests are small.** 32–48 steered videos per run, single seeds per condition,
+  three targets; the edit is the same vector added to every token, which is a crude edit and
+  does not target the ball's tokens. Results 7 is a negative result about effects of this size
+  and kind, not evidence that the model does not use direction.
 - One model size.
 
 ## Reproducing

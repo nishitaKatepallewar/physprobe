@@ -42,11 +42,81 @@ def test_verdict_rule():
            "pull_vs_permuted": 0.03, "pull_vs_permuted_se": 0.01,
            "pull_vs_shuffled": 0.01, "pull_vs_shuffled_se": 0.01}
     v = disturb.verdict(pd.DataFrame([row]))
-    assert v.verdict.iloc[0] == "FAIL"  # does not beat the shuffled-label control
+    assert v.verdict.iloc[0] == "FAIL (pull only)"  # does not beat the shuffled-label control
     row["pull_vs_shuffled"] = 0.025
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "PASS (pull only)"
+    row.update(approach=0.002, approach_se=0.001)  # beats the controls but moves away from the target
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "FAIL"
+    row.update(approach=-0.003)
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "PASS"
     row["reader_err_deg"] = 70.0
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0].startswith("NO VERDICT")
+
+
+def test_ring_from_another_set():
+    rng = np.random.default_rng(1)
+    ang = np.repeat(np.arange(0, 360, 45), 4).astype(float)
+    th = np.deg2rad(ang)
+    a, b = rng.standard_normal(12), rng.standard_normal(12)
+    X_src = np.cos(th)[:, None] * a + np.sin(th)[:, None] * b
+    X = X_src * 1.0 + rng.standard_normal(X_src.shape) * 0.01
+    D_self = disturb.ring_shifts(X, ang, 0.0, 1)
+    D_src = disturb.ring_shifts(X, ang, 0.0, 1, source=(X_src, ang))
+    np.testing.assert_allclose(D_self, D_src, atol=0.05)
+
+
+def test_recheck_readers():
+    rng = np.random.default_rng(2)
+    rows, P = [], []
+    for v, ang in enumerate(np.repeat(np.arange(0, 360, 45), 3)):
+        for kind in ("unperturbed", "steer", "permuted"):
+            shown = 90 if kind == "steer" else ang
+            P.append(np.r_[np.cos(np.deg2rad(shown)), np.sin(np.deg2rad(shown)), rng.normal(0, .05, 6)])
+            rows.append({"video": v, "direction_deg": ang, "kind": kind, "scale": 0.0 if kind == "unperturbed" else 0.4})
+    out = disturb.recheck(pd.DataFrame(rows), np.array(P), "direction_deg", 90.0, k=3)
+    for _, r in out.iterrows():
+        assert r.reader_err_deg < 20 and r.err_to_target_steer < 10 and r.err_to_target_permuted > 60
+
+
+def test_flip_gap():
+    rows = []
+    for v in range(4):
+        rows += [{"video": v, "kind": "unperturbed", "scale": 0.0, "l2": 1.0, "l2_to_target": 3.0},
+                 {"video": v, "kind": "steer", "scale": 0.4, "l2": 2.5, "l2_to_target": 1.5},
+                 {"video": v, "kind": "permuted", "scale": 0.4, "l2": 1.2, "l2_to_target": 3.0}]
+    r = disturb.flip(pd.DataFrame(rows)).iloc[0]
+    assert r.flip_unperturbed == 0 and r.flip_steer == 1 and r.flip_permuted == 0
+    assert abs(r.gap_closed_steer - 1.5) < 1e-9 and abs(r.gap_closed_permuted - 0.1) < 1e-9
+    assert np.isnan(r.flip_z_vs_permuted) or r.flip_z_vs_permuted > 0
+
+
+def test_subspace_shifts_reach_target_at_the_layer():
+    rng = np.random.default_rng(3)
+    ang = np.tile(np.arange(0, 360, 45), 30).astype(float)
+    th = np.deg2rad(ang)
+    A = rng.standard_normal((6, 64))
+    X = np.c_[np.cos(th), np.sin(th), np.cos(2 * th), np.sin(2 * th), rng.normal(0, .3, (len(th), 2))] @ A \
+        + rng.normal(0, .05, (len(th), 64))
+    steered = np.arange(40)
+    D, info = disturb.subspace_shifts(X, ang, 90.0, steered=steered, max_probes=8)
+    assert D.shape == X.shape and info["probes_found"] >= 1
+    assert info["layer_read_err_to_target_after"] < 20 < info["layer_read_err_to_target_before"]
+
+
+def test_ring_compare_same_and_different_rings():
+    rng = np.random.default_rng(4)
+    ang = np.tile(np.arange(0, 360, 45), 20).astype(float)
+    th = np.deg2rad(ang)
+    F = np.c_[np.cos(th), np.sin(th)]
+    A1, A2 = rng.standard_normal((2, 48)), rng.standard_normal((2, 48))
+    X1 = F @ A1 + rng.normal(0, .1, (len(th), 48))
+    X2 = F @ A1 + rng.normal(0, .1, (len(th), 48))
+    X3 = F @ A2 + rng.normal(0, .1, (len(th), 48))
+    same = disturb.ring_compare(X1, ang, X2, ang, harmonics=1)
+    diff = disturb.ring_compare(X1, ang, X3, ang, harmonics=1)
+    assert same["mean_angle_deg"] < 15 < diff["mean_angle_deg"]
+    assert same["b_ring_r2_other_ring"] > 0.8 > diff["b_ring_r2_other_ring"]
+    assert same["a_probe_err_deg"] < 10
 
 
 def test_matched_ids():
@@ -135,6 +205,20 @@ def test_disturb_command_on_tiny_model(tmp_path):
     np.testing.assert_allclose(r[r.kind == "steer"].shift_rel, 0.3, rtol=1e-4)
     assert np.load(tmp_path / "r" / "disturb_L1_predictions.npz")["pooled"].shape[0] == len(r)
     assert "pred_speed_change" not in r.columns or r.pred_speed_change.notna().any()
+    main(["disturb-recheck", "--run", str(tmp_path / "r")])
+    assert (tmp_path / "r" / "disturb_recheck.csv").exists()
+    assert (tmp_path / "r" / "disturb_flip.csv").exists()
+    main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "x"), "--tiny",
+          "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "ring",
+          "--sizes", "0.3", "--ring-from", str(tmp_path / "acts")])
+    main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "s"), "--tiny",
+          "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "subspace",
+          "--probes", "2"])
+    assert (tmp_path / "s" / "disturb_L1_subspace.json").exists()
+    main(["ring-compare", "--a", str(tmp_path / "acts"), "--b", str(tmp_path / "acts"), "--layers", "1",
+          "--out", str(tmp_path / "rc.csv")])
+    assert (tmp_path / "rc.csv").exists()
+    assert "shuffled" not in set(pd.read_csv(tmp_path / "s" / "disturb_L1.csv").kind)
     main(["disturb-figure", "--run", str(tmp_path / "d"), "--data", str(tmp_path / "data"), "--layer", "1",
           "--scale", "8", "--examples", "3"])
     assert (tmp_path / "d" / "disturb_L1_x8.png").stat().st_size > 10_000
@@ -143,7 +227,7 @@ def test_disturb_command_on_tiny_model(tmp_path):
     from physprobe.gui import data as D
     from physprobe.gui import figures as F
     found = D.discover(tmp_path, tmp_path / "data")
-    assert [e["name"] for e in found.steering] == ["d", "r"]
+    assert [e["name"] for e in found.steering] == ["d", "r", "s", "x"]
     bundle = export_bundle(tmp_path, tmp_path.parent / f"{tmp_path.name}_bundle", data=tmp_path / "data",
                            progress=lambda *_: None)
     res = D.read_disturb(D.discover(bundle).steering[0]["path"])

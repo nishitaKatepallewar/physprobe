@@ -80,20 +80,66 @@ def _ln(x):
     return F.layer_norm(x, (x.shape[-1],))
 
 
-def ring_shifts(X: np.ndarray, angles_deg: np.ndarray, target_deg: float, harmonics: int = 2):
+def ring_shifts(X: np.ndarray, angles_deg: np.ndarray, target_deg: float, harmonics: int = 2,
+                source=None):
     """Shift along a fitted ring instead of between condition means. A smooth model
-    x ~ mu + sum_k A_k cos(k th) + B_k sin(k th) is fitted by least squares over all
-    videos; each video is moved from its own angle to the target angle on that model,
-    keeping everything the model does not explain (its residual) unchanged. The shift
-    lies in the 2 * harmonics dimensions of the ring, so it carries no other factor."""
-    th = np.deg2rad(angles_deg.astype(float))
+    x ~ mu + sum_k A_k cos(k th) + B_k sin(k th) is fitted by least squares; each video
+    is moved from its own angle to the target angle on that model, keeping everything
+    the model does not explain (its residual) unchanged. The shift lies in the
+    2 * harmonics dimensions of the ring, so it carries no other factor.
+    source: (X_src, angles_src) fits the ring on another set of videos (e.g. stepped
+    videos) and applies it to these ones; default: fit on X itself."""
     def basis(t):
         return np.stack([f(k * t) for k in range(1, harmonics + 1) for f in (np.cos, np.sin)], -1)
-    F = basis(th)
-    Fc = F - F.mean(0)
-    coef, *_ = np.linalg.lstsq(Fc, X - X.mean(0), rcond=None)  # [2K, d]
-    tgt = basis(np.full(len(th), np.deg2rad(float(target_deg))))
+    Xs, angs = (X, angles_deg) if source is None else source
+    Fs = basis(np.deg2rad(np.asarray(angs, dtype=float)))
+    coef, *_ = np.linalg.lstsq(Fs - Fs.mean(0), Xs - Xs.mean(0), rcond=None)  # [2K, d]
+    F = basis(np.deg2rad(np.asarray(angles_deg, dtype=float)))
+    tgt = basis(np.full(len(F), np.deg2rad(float(target_deg))))
     return (tgt - F) @ coef
+
+
+def subspace_shifts(X: np.ndarray, angles_deg, target_deg: float, steered=None, probes=None,
+                    max_probes: int = 60, seed: int = 0, device: str = "cpu"):
+    """The paper's steering (App. C.11-C.12) as a shift of each activation.
+
+    The orthogonal probe sequence for direction is built on the videos NOT in
+    `steered` (80/20 split for its stop rule). Each activation is split into V c + x_perp
+    on the span V of the first `probes` probes (all by default), c is replaced by the
+    least-squares c* for which every one of those probes reads target_deg, and the
+    shift is returned in the activations' own units.
+
+    Also returns the paper's own success measure on the steered videos: a ridge probe
+    fitted on their unsteered activations reads the steered ones at the same layer
+    (error to the target, before and after)."""
+    from .probes import Target
+    from .subspace import orthogonal_probe_sequence, ridge_readout, steer
+    ang = np.asarray(angles_deg, float)
+    th = np.deg2rad(ang)
+    Y = np.stack([np.sin(th), np.cos(th)], 1)
+    n = len(X)
+    steered = np.arange(n) if steered is None else np.asarray(steered)
+    fit = np.setdiff1d(np.arange(n), steered)
+    if len(fit) < 10:
+        fit = np.arange(n)
+    perm = np.random.default_rng(seed).permutation(fit)
+    nva = max(2, int(round(0.2 * len(perm))))
+    sub = lambda i: Target("direction", "circular", Y[i], ang[i])
+    seq = orthogonal_probe_sequence(X[perm[nva:]], sub(perm[nva:]), X[perm[:nva]], sub(perm[:nva]),
+                                    max_probes=max_probes, min_probes=1, seed=seed, device=device)
+    m = seq.n_probes if probes is None else min(int(probes), seq.n_probes)
+    Z = seq.scaler(X).astype(np.float64)
+    Zs = steer(Z, seq, float(target_deg), m)
+    delta = (Zs - Z) * seq.scaler.s
+    We, be = ridge_readout(Z[steered], Y[steered])
+    read = lambda A: np.rad2deg(np.arctan2(*(A @ We + be).T)) % 360
+    err = lambda a: float(np.mean(np.abs((a - target_deg + 180) % 360 - 180)))
+    info = {"probes_found": seq.n_probes, "probes_used": m, "dims": 2 * m,
+            "layer_read_err_to_target_before": err(read(Z[steered])),
+            "layer_read_err_to_target_after": err(read(Zs[steered])),
+            "shift_rel_mean": float((np.linalg.norm(delta[steered], axis=1)
+                                     / np.linalg.norm(X[steered], axis=1)).mean())}
+    return delta, info
 
 
 def _fit_reader(P, Y):
@@ -107,12 +153,15 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
         n_controls: int = 3, control_kinds=("permuted", "random", "shuffled"),
         match_cols=("speed", "start_id"), batch_size: int = 4, seed: int = 0, frames: int | None = None,
         scales=(1.0,), target_norm: bool = True, method: str = "mean", sizes=None,
-        speed_col: str | None = "speed", harmonics: int = 2, progress=None) -> pd.DataFrame:
+        speed_col: str | None = "speed", harmonics: int = 2, ring_source=None,
+        probes=None, device: str = "cpu", progress=None) -> pd.DataFrame:
     """One row per (video, condition). Conditions: unperturbed, and for every scale s
     steer@s and <kind>_<k>@s (controls with the norm of the scaled steer).
 
     method: "mean" (difference of condition means, all dimensions) or "ring" (move
-            along a fitted ring of `harmonics` harmonics, see ring_shifts).
+            along a fitted ring of `harmonics` harmonics, see ring_shifts) or
+            "subspace" (the paper's many-probe subspace steer, see subspace_shifts; its
+            "shuffled" control is not defined and is dropped).
     sizes:  if given, each video's shift is rescaled to this fraction of the norm of
             its own activation (equal relative size across videos, layers and sets);
             the values then replace `scales`.
@@ -131,15 +180,20 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
     X = cache.layer(layer).astype(np.float64)
     vals = labels[col].to_numpy()
     delta_all, near = condition_shifts(X, vals, target)
+    sub_info = None
     if method == "ring":
-        delta_all = ring_shifts(X, vals, float(near), harmonics)
+        delta_all = ring_shifts(X, vals, float(near), harmonics, ring_source)
+    elif method == "subspace":
+        delta_all, sub_info = subspace_shifts(X, vals, float(near), steered=ids, probes=probes,
+                                              seed=seed, device=device)
+        control_kinds = tuple(k for k in control_kinds if k != "shuffled")
     elif method != "mean":
         raise ValueError(f"method {method!r}")
     norms = np.linalg.norm(X, axis=1)
 
     def build(v):
         if method == "ring":
-            return ring_shifts(X, v, float(near), harmonics)
+            return ring_shifts(X, v, float(near), harmonics, ring_source)
         return condition_shifts(X, v, near)[0]
     def build_shuffled():
         S = build(rng.permutation(vals))
@@ -208,6 +262,9 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
         if progress:
             progress(bi + 1, len(batches))
     df = pd.DataFrame(rows)
+    df["target"] = near
+    if sub_info:
+        df.attrs["subspace"] = sub_info
     P = np.stack(pooled)
     df.attrs.update(layer=layer, target=near, context_tubelets=context, tubelets=Tt, method=method)
     _decode_predictions(df, P, col, near, speed_col)
@@ -260,6 +317,16 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
             b = base[metric].reindex(w.index)
             r = {"scale": sc, "metric": metric, "shift_rel": w["shift_rel"]["steer"].mean(),
                  "videos": len(w), "unperturbed": b.mean(), "steer": w[metric]["steer"].mean()}
+            tm = f"{metric}_to_target"
+            if tm in w:
+                # absolute approach: steer's error to the target video's future minus the
+                # unperturbed one (negative = the steer brings the prediction closer)
+                ap = w[tm]["steer"] - base[tm].reindex(w.index)
+                r["approach"] = ap.mean()
+                r["approach_se"] = ap.std(ddof=1) / np.sqrt(ap.notna().sum())
+                ow = w[metric]["steer"] - b
+                r["away_from_own"] = ow.mean()
+                r["away_from_own_se"] = ow.std(ddof=1) / np.sqrt(ow.notna().sum())
             for kind in kinds:
                 r[kind] = w[metric][kind].mean()
                 fi = (w[metric]["steer"] - w[metric][kind]) / b
@@ -387,9 +454,14 @@ def figure(df: pd.DataFrame, ds, path, scale: float, col: str = "direction_deg",
 
 
 def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45.0) -> pd.DataFrame:
-    """The decision rule fixed before the runs (primary measure: pull, L2). Per layer
-    and size: PASS if the reader reads held-out predictions to within reader_max_deg
-    and the steer's pull exceeds every control's by at least n_se standard errors."""
+    """Decision rule (L2), per layer and size. PASS requires all of:
+      - the reader reads held-out predictions to within reader_max_deg;
+      - approach: the steer brings the prediction closer to the real future of the
+        matched target-direction video than no steering does (z <= -n_se);
+      - pull: closer to that future than every control (z >= n_se).
+    Pull alone is not enough: controls that damage the prediction more make a steer
+    that damages it less look like a pull. (The first version of this rule used pull
+    alone; summaries without the approach columns are judged by pull alone and say so.)"""
     out = []
     for _, r in summary[summary.metric == "l2"].iterrows():
         ctrls = [c[len("pull_vs_"):] for c in r.index if c.startswith("pull_vs_") and not c.endswith("_se")]
@@ -397,8 +469,151 @@ def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45
                    for c in ctrls}
         reader_ok = bool(r.get("reader_err_deg", np.nan) <= reader_max_deg)
         beats = bool(ctrls) and all(m >= n_se for m in margins.values())
+        has_ap = "approach" in r.index and pd.notna(r.get("approach"))
+        ap_z = r["approach"] / r["approach_se"] if has_ap and r["approach_se"] > 0 else np.nan
+        approaches = bool(has_ap and ap_z <= -n_se)
+        ok = reader_ok and beats and (approaches if has_ap else True)
         out.append({"layer": r.get("layer"), "size": r.scale, "reader_err_deg": r.get("reader_err_deg"),
-                    "reader_ok": reader_ok, **{f"pull_z_vs_{c}": m for c, m in margins.items()},
-                    "verdict": "PASS" if (reader_ok and beats) else
-                               "NO VERDICT (reader too weak)" if not reader_ok else "FAIL"})
+                    "reader_ok": reader_ok, "approach_z": ap_z,
+                    **{f"pull_z_vs_{c}": m for c, m in margins.items()},
+                    "verdict": "NO VERDICT (reader too weak)" if not reader_ok else
+                               ("PASS" if ok else "FAIL") + ("" if has_ap else " (pull only)")})
     return pd.DataFrame(out)
+
+
+# ----------------------------------------------------------- reader cross-check
+
+def recheck(df: pd.DataFrame, P: np.ndarray, col: str, target: float, k: int = 5) -> pd.DataFrame:
+    """Re-read the predicted direction with two leave-one-video-out readers fitted on
+    the unperturbed predictions of the other videos: the linear ridge reader used by
+    `run`, and a non-linear one (k nearest neighbours by cosine similarity, circular
+    mean of their directions). Returns, per scale and reader, the held-out reader error
+    and the mean error to the target under each condition kind."""
+    base = (df.kind == "unperturbed").to_numpy()
+    vid = df.video.to_numpy()
+    ang_true = df[col].to_numpy(dtype=float)
+    th = np.deg2rad(ang_true)
+    Y = np.stack([np.sin(th), np.cos(th)], 1)
+    Pn = P / np.maximum(np.linalg.norm(P, axis=1, keepdims=True), 1e-12)
+    lin = np.full(len(df), np.nan)
+    knn = np.full(len(df), np.nan)
+    for v in np.unique(vid):
+        tr, rows = base & (vid != v), vid == v
+        Q = _fit_reader(P[tr], Y[tr])(P[rows])
+        lin[rows] = np.rad2deg(np.arctan2(Q[:, 0], Q[:, 1])) % 360
+        sim = Pn[rows] @ Pn[tr].T
+        nn = np.argsort(-sim, axis=1)[:, :k]
+        t = th[tr][nn]
+        knn[rows] = np.rad2deg(np.arctan2(np.sin(t).mean(1), np.cos(t).mean(1))) % 360
+    out = []
+    for name, a in (("linear", lin), (f"knn{k}", knn)):
+        err_t = np.abs((a - target + 180) % 360 - 180)
+        err_true = np.abs((a - ang_true + 180) % 360 - 180)
+        d = df.assign(err_t=err_t)
+        for sc in sorted(s for s in df.scale.unique() if s > 0):
+            part = d[(d.scale == sc) | (d.kind == "unperturbed")]
+            per = part.groupby(["video", "kind"]).err_t.mean().unstack()
+            r = {"reader": name, "scale": sc, "reader_err_deg": err_true[base].mean()}
+            for kind in per.columns:
+                r[f"err_to_target_{kind}"] = per[kind].mean()
+            out.append(r)
+    return pd.DataFrame(out)
+
+
+def flip(df: pd.DataFrame, metric: str = "l2") -> pd.DataFrame:
+    """Reader-free check. For each video with a matched target-direction video, the gap
+    is (error to the target video's real future) - (error to its own real future); it is
+    positive when the prediction is closer to its own future. Per scale and condition
+    kind: the fraction of predictions that flip (gap < 0, now closer to the target
+    video's future), and the paired difference of the steer's flip rate from each
+    control's over videos (controls averaged over repeats per video), with its z.
+    Also the share of the mean unperturbed gap closed (ratio of means, robust to videos
+    whose own gap is near zero)."""
+    tm = f"{metric}_to_target"
+    if tm not in df:
+        return pd.DataFrame()
+    d = df[df[tm].notna()].assign(gap=lambda x: x[tm] - x[metric])
+    d = d.assign(flip=(d.gap < 0).astype(float))
+    g0 = d[d.kind == "unperturbed"].set_index("video").gap
+    out = []
+    for sc in sorted(s for s in d.scale.unique() if s > 0):
+        part = d[d.scale == sc]
+        fv = part.groupby(["video", "kind"]).flip.mean().unstack()
+        gv = part.groupby(["video", "kind"]).gap.mean().unstack()
+        r = {"scale": sc, "metric": metric, "videos": int(len(fv)),
+             "flip_unperturbed": float((g0 < 0).mean())}
+        for kind in fv.columns:
+            r[f"flip_{kind}"] = float(fv[kind].mean())
+            r[f"gap_closed_{kind}"] = float(1 - gv[kind].mean() / g0.reindex(gv.index).mean())
+        for kind in fv.columns:
+            if kind == "steer":
+                continue
+            diff = fv["steer"] - fv[kind]
+            se = diff.std(ddof=1) / np.sqrt(diff.notna().sum())
+            r[f"flip_z_vs_{kind}"] = float(diff.mean() / se) if se > 0 else np.nan
+        out.append(r)
+    return pd.DataFrame(out)
+
+
+def _ring_basis(angles_deg, harmonics):
+    t = np.deg2rad(np.asarray(angles_deg, float))
+    return np.stack([f(k * t) for k in range(1, harmonics + 1) for f in (np.cos, np.sin)], -1)
+
+
+def ring_compare(XA, angA, XB, angB, harmonics: int = 2, folds: int = 5, seed: int = 0) -> dict:
+    """How well a direction ring describes each of two activation sets, and whether the
+    two rings are the same. Per set: held-out direction-probe error (deg), held-out
+    share of variance explained by its own ring, share explained by the other set's
+    ring (each set centred on its own mean, ring coefficients fixed, amplitude refitted
+    by one scalar), and ring amplitude. Between rings: principal angles of their
+    2*harmonics-dimensional spans, against random subspaces of that size."""
+    from .subspace import principal_angles
+    rng = np.random.default_rng(seed)
+
+    def fit(X, a):
+        F = _ring_basis(a, harmonics)
+        return np.linalg.lstsq(F - F.mean(0), X - X.mean(0), rcond=None)[0]  # [2h, d]
+
+    def stats(X, a):
+        a = np.asarray(a, float)
+        th = np.deg2rad(a)
+        Y = np.stack([np.sin(th), np.cos(th)], 1)
+        idx = rng.permutation(len(X)) % folds
+        err, sse, sst = [], 0.0, 0.0
+        for f in range(folds):
+            tr, te = idx != f, idx == f
+            Q = _fit_reader(X[tr], Y[tr])(X[te])
+            pa = np.rad2deg(np.arctan2(Q[:, 0], Q[:, 1])) % 360
+            err.append(np.abs((pa - a[te] + 180) % 360 - 180))
+            C = fit(X[tr], a[tr])
+            F = _ring_basis(a, harmonics)
+            pred = (F[te] - F[tr].mean(0)) @ C + X[tr].mean(0)
+            sse += ((X[te] - pred) ** 2).sum()
+            sst += ((X[te] - X[tr].mean(0)) ** 2).sum()
+        return float(np.concatenate(err).mean()), float(1 - sse / sst)
+
+    def explained_by(X, a, C):
+        F = _ring_basis(a, harmonics)
+        G = (F - F.mean(0)) @ C
+        Xc = X - X.mean(0)
+        k = float((G * Xc).sum() / max((G * G).sum(), 1e-12))
+        return float(1 - ((Xc - k * G) ** 2).sum() / (Xc ** 2).sum()), k
+
+    CA, CB = fit(XA, angA), fit(XB, angB)
+    QA, QB = np.linalg.qr(CA.T)[0], np.linalg.qr(CB.T)[0]
+    ang = principal_angles(QA, QB)
+    d, m = QA.shape
+    rand = [principal_angles(np.linalg.qr(rng.standard_normal((d, m)))[0],
+                             np.linalg.qr(rng.standard_normal((d, m)))[0]).mean() for _ in range(50)]
+    out = {}
+    for name, X, a, Cown, Coth in (("a", XA, angA, CA, CB), ("b", XB, angB, CB, CA)):
+        e, r2 = stats(X, a)
+        r2o, k = explained_by(X, a, Coth)
+        r2s, _ = explained_by(X, a, Cown)
+        out.update({f"{name}_probe_err_deg": e, f"{name}_ring_r2_heldout": r2,
+                    f"{name}_ring_r2_own_fit": r2s, f"{name}_ring_r2_other_ring": r2o,
+                    f"{name}_other_ring_gain": k,
+                    f"{name}_ring_amplitude_rel": float(np.linalg.norm(Cown) / np.sqrt((X - X.mean(0)) .var(0).sum()))})
+    out.update({"ring_dims": m, "principal_angles_deg": [round(float(x), 1) for x in ang],
+                "mean_angle_deg": float(ang.mean()), "mean_angle_random_deg": float(np.mean(rand))})
+    return out

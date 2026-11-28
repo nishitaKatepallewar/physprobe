@@ -169,6 +169,9 @@ columns: `make-folder --csv videos.csv --out data/mine --target angle:circular h
 | `subspace` | orthogonal probe sequences, erasure, subspace angles |
 | `tuning` | direction- and speed-tuned MLP units |
 | `steer` | subspace and difference-of-means steering (`--strict`, `--propagate`) |
+| `disturb` | edit one layer, run the rest of the encoder and the predictor, compare the predicted future with real futures (`--method mean/ring/subspace`, `--sizes`, `--ring-from`) |
+| `disturb-recheck` | re-read a disturb run: linear and nearest-neighbour readers, flips, the current decision rule |
+| `ring-compare` | does one direction ring describe two activation sets (e.g. ordinary and stepped videos)? |
 | `ablate` | attention ablations (`--layers`, `--conditions`, `--combine`); resumes finished conditions |
 | `attn`, `patch` | attention distance; per-patch and attentive probes |
 | `manifold` | shape statistics of a variable by layer (`--by`, `--by2` for tori, `--kind fc1`) |
