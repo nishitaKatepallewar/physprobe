@@ -484,19 +484,20 @@ def cmd_disturb(a):
     allsum.to_csv(out / "disturb_summary.csv", index=False)
     v = disturb.verdict(allsum)
     v.to_csv(out / "disturb_verdict.csv", index=False)
-    print("\nDecision rule (fixed in advance; primary measure = pull towards the real future of a video "
-          "moving in the target direction): PASS if the reader reads held-out predictions to within 45 deg "
-          "AND the steer's pull beats every control by >= 2 standard errors.")
+    print("\nDecision rule: PASS if (1) the reader reads held-out predictions to within 45 deg, (2) the steer "
+          "brings the prediction closer to the real future of a video moving in the target direction than no "
+          "steering does (approach z <= -2), and (3) closer than every control does (pull z >= +2).")
     for _, r in v.iterrows():
         zs = "  ".join(f"{c[len('pull_z_vs_'):]} z={r[c]:+.1f}" for c in v.columns if c.startswith("pull_z_vs_"))
-        print(f"  layer {int(r.layer)} size {r['size']:g}: reader {r.reader_err_deg:.1f} deg  {zs}  -> {r.verdict}")
+        print(f"  layer {int(r.layer)} size {r['size']:g}: reader {r.reader_err_deg:.1f} deg  "
+              f"approach z={r.approach_z:+.1f}  pull: {zs}  -> {r.verdict}")
     print(f"-> {out}/disturb_summary.csv, disturb_L*.csv")
 
 
 def cmd_disturb_recheck(a):
     from . import disturb
     run = Path(a.run)
-    rows, flips = [], []
+    rows, flips, sums = [], [], []
     for f in sorted(run.glob("disturb_L*.csv")):
         m = re.match(r"disturb_L(\d+)\.csv", f.name)
         npz = run / f"disturb_L{m.group(1)}_predictions.npz" if m else None
@@ -508,6 +509,9 @@ def cmd_disturb_recheck(a):
         r = disturb.recheck(df, P, a.col, target, a.k)
         r.insert(0, "layer", int(m.group(1)))
         rows.append(r)
+        sm = disturb.summarize(df)
+        sm.insert(0, "layer", int(m.group(1)))
+        sums.append(sm)
         fl = disturb.flip(df)
         if len(fl):
             fl.insert(0, "layer", int(m.group(1)))
@@ -535,6 +539,17 @@ def cmd_disturb_recheck(a):
                   + "   | share of mean gap closed: "
                   + "  ".join(f"{k} {r[f'gap_closed_{k}']:+.2f}" for k in ["steer"] + ctr))
         print(f"-> {run}/disturb_flip.csv")
+    # re-judge with the current decision rule (rewrites disturb_summary.csv and disturb_verdict.csv)
+    allsum = pd.concat(sums)
+    allsum.to_csv(run / "disturb_summary.csv", index=False)
+    v = disturb.verdict(allsum)
+    v.to_csv(run / "disturb_verdict.csv", index=False)
+    print("Decision rule: reader within 45 deg, approach to the target video's future vs no steering "
+          "z <= -2, and pull vs every control z >= +2:")
+    for _, r in v.iterrows():
+        zs = "  ".join(f"{c[len('pull_z_vs_'):]} {r[c]:+.1f}" for c in v.columns if c.startswith("pull_z_vs_"))
+        print(f"  layer {int(r.layer)} size {r['size']:g}: approach z {r.approach_z:+.1f} | pull z {zs} -> {r.verdict}")
+    print(f"-> {run}/disturb_verdict.csv (rewritten)")
 
 
 def cmd_ring_compare(a):

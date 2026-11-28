@@ -42,8 +42,12 @@ def test_verdict_rule():
            "pull_vs_permuted": 0.03, "pull_vs_permuted_se": 0.01,
            "pull_vs_shuffled": 0.01, "pull_vs_shuffled_se": 0.01}
     v = disturb.verdict(pd.DataFrame([row]))
-    assert v.verdict.iloc[0] == "FAIL"  # does not beat the shuffled-label control
+    assert v.verdict.iloc[0] == "FAIL (pull only)"  # does not beat the shuffled-label control
     row["pull_vs_shuffled"] = 0.025
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "PASS (pull only)"
+    row.update(approach=0.002, approach_se=0.001)  # beats the controls but moves away from the target
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "FAIL"
+    row.update(approach=-0.003)
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "PASS"
     row["reader_err_deg"] = 70.0
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0].startswith("NO VERDICT")

@@ -317,6 +317,16 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
             b = base[metric].reindex(w.index)
             r = {"scale": sc, "metric": metric, "shift_rel": w["shift_rel"]["steer"].mean(),
                  "videos": len(w), "unperturbed": b.mean(), "steer": w[metric]["steer"].mean()}
+            tm = f"{metric}_to_target"
+            if tm in w:
+                # absolute approach: steer's error to the target video's future minus the
+                # unperturbed one (negative = the steer brings the prediction closer)
+                ap = w[tm]["steer"] - base[tm].reindex(w.index)
+                r["approach"] = ap.mean()
+                r["approach_se"] = ap.std(ddof=1) / np.sqrt(ap.notna().sum())
+                ow = w[metric]["steer"] - b
+                r["away_from_own"] = ow.mean()
+                r["away_from_own_se"] = ow.std(ddof=1) / np.sqrt(ow.notna().sum())
             for kind in kinds:
                 r[kind] = w[metric][kind].mean()
                 fi = (w[metric]["steer"] - w[metric][kind]) / b
@@ -444,9 +454,14 @@ def figure(df: pd.DataFrame, ds, path, scale: float, col: str = "direction_deg",
 
 
 def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45.0) -> pd.DataFrame:
-    """The decision rule fixed before the runs (primary measure: pull, L2). Per layer
-    and size: PASS if the reader reads held-out predictions to within reader_max_deg
-    and the steer's pull exceeds every control's by at least n_se standard errors."""
+    """Decision rule (L2), per layer and size. PASS requires all of:
+      - the reader reads held-out predictions to within reader_max_deg;
+      - approach: the steer brings the prediction closer to the real future of the
+        matched target-direction video than no steering does (z <= -n_se);
+      - pull: closer to that future than every control (z >= n_se).
+    Pull alone is not enough: controls that damage the prediction more make a steer
+    that damages it less look like a pull. (The first version of this rule used pull
+    alone; summaries without the approach columns are judged by pull alone and say so.)"""
     out = []
     for _, r in summary[summary.metric == "l2"].iterrows():
         ctrls = [c[len("pull_vs_"):] for c in r.index if c.startswith("pull_vs_") and not c.endswith("_se")]
@@ -454,10 +469,15 @@ def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45
                    for c in ctrls}
         reader_ok = bool(r.get("reader_err_deg", np.nan) <= reader_max_deg)
         beats = bool(ctrls) and all(m >= n_se for m in margins.values())
+        has_ap = "approach" in r.index and pd.notna(r.get("approach"))
+        ap_z = r["approach"] / r["approach_se"] if has_ap and r["approach_se"] > 0 else np.nan
+        approaches = bool(has_ap and ap_z <= -n_se)
+        ok = reader_ok and beats and (approaches if has_ap else True)
         out.append({"layer": r.get("layer"), "size": r.scale, "reader_err_deg": r.get("reader_err_deg"),
-                    "reader_ok": reader_ok, **{f"pull_z_vs_{c}": m for c, m in margins.items()},
-                    "verdict": "PASS" if (reader_ok and beats) else
-                               "NO VERDICT (reader too weak)" if not reader_ok else "FAIL"})
+                    "reader_ok": reader_ok, "approach_z": ap_z,
+                    **{f"pull_z_vs_{c}": m for c, m in margins.items()},
+                    "verdict": "NO VERDICT (reader too weak)" if not reader_ok else
+                               ("PASS" if ok else "FAIL") + ("" if has_ap else " (pull only)")})
     return pd.DataFrame(out)
 
 
