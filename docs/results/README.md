@@ -38,6 +38,7 @@ Two kinds of file:
 | `velocity_stepped_probe_random_r2.csv` | same, random weights (layers 0, 8, 12, 23 printed) |
 | `stepped24_probe_r2.csv` | `probe` on `velocity_stepped` with 24 directions (layers 0, 8, 12, 23) |
 | `stepped24_manifold_direction.csv`, `velocity_stepped_manifold_direction.csv` | `manifold --by direction_deg` |
+| `steering_through_predictor.csv` | `disturb` and `disturb-recheck`, layer 8 unless stated (Results 7) |
 | `velocity_stepped_dimension.csv` | `subspace` on `velocity_stepped` |
 | `steering_curves.csv` | `steer --strict` on `velocity` (layer 8) and `velocity_stepped` (layer 10) |
 | `velocity_steering_propagation_L8.csv` | `steer --strict --propagate`, 64 random held-out videos |
