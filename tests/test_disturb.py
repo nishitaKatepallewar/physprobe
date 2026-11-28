@@ -86,6 +86,19 @@ def test_flip_gap():
     assert np.isnan(r.flip_z_vs_permuted) or r.flip_z_vs_permuted > 0
 
 
+def test_subspace_shifts_reach_target_at_the_layer():
+    rng = np.random.default_rng(3)
+    ang = np.tile(np.arange(0, 360, 45), 30).astype(float)
+    th = np.deg2rad(ang)
+    A = rng.standard_normal((6, 64))
+    X = np.c_[np.cos(th), np.sin(th), np.cos(2 * th), np.sin(2 * th), rng.normal(0, .3, (len(th), 2))] @ A \
+        + rng.normal(0, .05, (len(th), 64))
+    steered = np.arange(40)
+    D, info = disturb.subspace_shifts(X, ang, 90.0, steered=steered, max_probes=8)
+    assert D.shape == X.shape and info["probes_found"] >= 1
+    assert info["layer_read_err_to_target_after"] < 20 < info["layer_read_err_to_target_before"]
+
+
 def test_matched_ids():
     lab = pd.DataFrame({"direction_deg": [0, 90, 0, 90], "speed": [1, 1, 2, 2], "start_id": [0, 0, 0, 0]})
     m = disturb.matched_ids(lab, "direction_deg", 90, ["speed", "start_id"])
@@ -178,6 +191,11 @@ def test_disturb_command_on_tiny_model(tmp_path):
     main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "x"), "--tiny",
           "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "ring",
           "--sizes", "0.3", "--ring-from", str(tmp_path / "acts")])
+    main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "s"), "--tiny",
+          "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "subspace",
+          "--probes", "2"])
+    assert (tmp_path / "s" / "disturb_L1_subspace.json").exists()
+    assert "shuffled" not in set(pd.read_csv(tmp_path / "s" / "disturb_L1.csv").kind)
     main(["disturb-figure", "--run", str(tmp_path / "d"), "--data", str(tmp_path / "data"), "--layer", "1",
           "--scale", "8", "--examples", "3"])
     assert (tmp_path / "d" / "disturb_L1_x8.png").stat().st_size > 10_000
@@ -186,7 +204,7 @@ def test_disturb_command_on_tiny_model(tmp_path):
     from physprobe.gui import data as D
     from physprobe.gui import figures as F
     found = D.discover(tmp_path, tmp_path / "data")
-    assert [e["name"] for e in found.steering] == ["d", "r", "x"]
+    assert [e["name"] for e in found.steering] == ["d", "r", "s", "x"]
     bundle = export_bundle(tmp_path, tmp_path.parent / f"{tmp_path.name}_bundle", data=tmp_path / "data",
                            progress=lambda *_: None)
     res = D.read_disturb(D.discover(bundle).steering[0]["path"])

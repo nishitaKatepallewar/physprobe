@@ -99,6 +99,49 @@ def ring_shifts(X: np.ndarray, angles_deg: np.ndarray, target_deg: float, harmon
     return (tgt - F) @ coef
 
 
+def subspace_shifts(X: np.ndarray, angles_deg, target_deg: float, steered=None, probes=None,
+                    max_probes: int = 60, seed: int = 0, device: str = "cpu"):
+    """The paper's steering (App. C.11-C.12) as a shift of each activation.
+
+    The orthogonal probe sequence for direction is built on the videos NOT in
+    `steered` (80/20 split for its stop rule). Each activation is split into V c + x_perp
+    on the span V of the first `probes` probes (all by default), c is replaced by the
+    least-squares c* for which every one of those probes reads target_deg, and the
+    shift is returned in the activations' own units.
+
+    Also returns the paper's own success measure on the steered videos: a ridge probe
+    fitted on their unsteered activations reads the steered ones at the same layer
+    (error to the target, before and after)."""
+    from .probes import Target
+    from .subspace import orthogonal_probe_sequence, ridge_readout, steer
+    ang = np.asarray(angles_deg, float)
+    th = np.deg2rad(ang)
+    Y = np.stack([np.sin(th), np.cos(th)], 1)
+    n = len(X)
+    steered = np.arange(n) if steered is None else np.asarray(steered)
+    fit = np.setdiff1d(np.arange(n), steered)
+    if len(fit) < 10:
+        fit = np.arange(n)
+    perm = np.random.default_rng(seed).permutation(fit)
+    nva = max(2, int(round(0.2 * len(perm))))
+    sub = lambda i: Target("direction", "circular", Y[i], ang[i])
+    seq = orthogonal_probe_sequence(X[perm[nva:]], sub(perm[nva:]), X[perm[:nva]], sub(perm[:nva]),
+                                    max_probes=max_probes, min_probes=1, seed=seed, device=device)
+    m = seq.n_probes if probes is None else min(int(probes), seq.n_probes)
+    Z = seq.scaler(X).astype(np.float64)
+    Zs = steer(Z, seq, float(target_deg), m)
+    delta = (Zs - Z) * seq.scaler.s
+    We, be = ridge_readout(Z[steered], Y[steered])
+    read = lambda A: np.rad2deg(np.arctan2(*(A @ We + be).T)) % 360
+    err = lambda a: float(np.mean(np.abs((a - target_deg + 180) % 360 - 180)))
+    info = {"probes_found": seq.n_probes, "probes_used": m, "dims": 2 * m,
+            "layer_read_err_to_target_before": err(read(Z[steered])),
+            "layer_read_err_to_target_after": err(read(Zs[steered])),
+            "shift_rel_mean": float((np.linalg.norm(delta[steered], axis=1)
+                                     / np.linalg.norm(X[steered], axis=1)).mean())}
+    return delta, info
+
+
 def _fit_reader(P, Y):
     from .subspace import IsoScaler, ridge_readout
     sc = IsoScaler(P)
@@ -111,12 +154,14 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
         match_cols=("speed", "start_id"), batch_size: int = 4, seed: int = 0, frames: int | None = None,
         scales=(1.0,), target_norm: bool = True, method: str = "mean", sizes=None,
         speed_col: str | None = "speed", harmonics: int = 2, ring_source=None,
-        progress=None) -> pd.DataFrame:
+        probes=None, device: str = "cpu", progress=None) -> pd.DataFrame:
     """One row per (video, condition). Conditions: unperturbed, and for every scale s
     steer@s and <kind>_<k>@s (controls with the norm of the scaled steer).
 
     method: "mean" (difference of condition means, all dimensions) or "ring" (move
-            along a fitted ring of `harmonics` harmonics, see ring_shifts).
+            along a fitted ring of `harmonics` harmonics, see ring_shifts) or
+            "subspace" (the paper's many-probe subspace steer, see subspace_shifts; its
+            "shuffled" control is not defined and is dropped).
     sizes:  if given, each video's shift is rescaled to this fraction of the norm of
             its own activation (equal relative size across videos, layers and sets);
             the values then replace `scales`.
@@ -135,8 +180,13 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
     X = cache.layer(layer).astype(np.float64)
     vals = labels[col].to_numpy()
     delta_all, near = condition_shifts(X, vals, target)
+    sub_info = None
     if method == "ring":
         delta_all = ring_shifts(X, vals, float(near), harmonics, ring_source)
+    elif method == "subspace":
+        delta_all, sub_info = subspace_shifts(X, vals, float(near), steered=ids, probes=probes,
+                                              seed=seed, device=device)
+        control_kinds = tuple(k for k in control_kinds if k != "shuffled")
     elif method != "mean":
         raise ValueError(f"method {method!r}")
     norms = np.linalg.norm(X, axis=1)
@@ -213,6 +263,8 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
             progress(bi + 1, len(batches))
     df = pd.DataFrame(rows)
     df["target"] = near
+    if sub_info:
+        df.attrs["subspace"] = sub_info
     P = np.stack(pooled)
     df.attrs.update(layer=layer, target=near, context_tubelets=context, tubelets=Tt, method=method)
     _decode_predictions(df, P, col, near, speed_col)

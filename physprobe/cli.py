@@ -433,9 +433,18 @@ def cmd_disturb(a):
         df, P = disturb.run(enc, ds, c, l, a.col, a.target, ids, a.context, a.controls,
                             batch_size=a.batch_size, seed=a.seed, frames=a.frames, match_cols=a.match,
                             scales=scales, target_norm=not a.raw_targets, method=a.method, sizes=sizes,
-                            harmonics=a.harmonics, ring_source=ring_source,
+                            harmonics=a.harmonics, ring_source=ring_source, probes=a.probes,
+                            device="cuda" if str(a.device).startswith("cuda") else "cpu",
                             progress=lambda i, n: bar.update(1))
         bar.close()
+        si = df.attrs.get("subspace")
+        if si:
+            (out / f"disturb_L{l}_subspace.json").write_text(json.dumps(si, indent=2))
+            print(f"\nlayer {l} [subspace steer, paper App. C.12]: {si['probes_used']} of "
+                  f"{si['probes_found']} probes ({si['dims']} dims), shift {si['shift_rel_mean']:.2f} x |act|; "
+                  f"paper's own check (a probe at the same layer, fitted on the steered videos' "
+                  f"unsteered activations): error to the target {si['layer_read_err_to_target_before']:.1f} "
+                  f"-> {si['layer_read_err_to_target_after']:.1f} deg")
         df.to_csv(out / f"disturb_L{l}.csv", index=False)
         np.savez_compressed(out / f"disturb_L{l}_predictions.npz", pooled=P.astype(np.float32))
         sm = disturb.summarize(df)
@@ -980,8 +989,12 @@ def main(argv=None):
     p.add_argument("--controls", type=int, default=3, help="repeats of each control per video")
     p.add_argument("--scales", default="1,4,16",
                    help="multiples of the difference-of-means shift (controls use the same norms)")
-    p.add_argument("--method", default="mean", choices=["mean", "ring"],
-                   help="mean: difference of condition means; ring: move along a fitted ring")
+    p.add_argument("--method", default="mean", choices=["mean", "ring", "subspace"],
+                   help="mean: difference of condition means; ring: move along a fitted ring; "
+                        "subspace: the paper's many-probe subspace steer (App. C.12), fitted on "
+                        "the videos that are not steered")
+    p.add_argument("--probes", type=int, default=None,
+                   help="probes of the sequence used by --method subspace (default: all found)")
     p.add_argument("--harmonics", type=int, default=2, help="harmonics of the ring model (--method ring)")
     p.add_argument("--ring-from", default=None, metavar="ACTS",
                    help="fit the ring on another activation cache (same model), e.g. stepped videos, "
