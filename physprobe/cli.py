@@ -537,6 +537,30 @@ def cmd_disturb_recheck(a):
         print(f"-> {run}/disturb_flip.csv")
 
 
+def cmd_ring_compare(a):
+    from . import disturb
+    from .extract import ActivationCache, parse_layers
+    A, B = ActivationCache(a.a), ActivationCache(a.b)
+    rows = []
+    for l in parse_layers(a.layers, A.n_layers):
+        r = disturb.ring_compare(A.layer(l).astype(np.float64), A.labels[a.col].to_numpy(),
+                                 B.layer(l).astype(np.float64), B.labels[a.col].to_numpy(), a.harmonics)
+        r["layer"] = l
+        rows.append(r)
+        print(f"layer {l}  (A = {a.a}, B = {a.b})")
+        for n in ("a", "b"):
+            print(f"  {n.upper()}: probe error {r[n+'_probe_err_deg']:5.1f} deg | ring explains "
+                  f"{r[n+'_ring_r2_heldout']:.1%} of variance (held out) | the other set's ring explains "
+                  f"{r[n+'_ring_r2_other_ring']:.1%} (own ring, same fit: {r[n+'_ring_r2_own_fit']:.1%})")
+        print(f"  angles between the two {r['ring_dims']}-dim rings: {r['principal_angles_deg']} "
+              f"(mean {r['mean_angle_deg']:.1f}; random subspaces {r['mean_angle_random_deg']:.1f})")
+    out = Path(a.out) if a.out else None
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(rows).to_csv(out, index=False)
+        print(f"-> {out}")
+
+
 def cmd_disturb_figure(a):
     from . import disturb
     from .datasets import VideoDataset
@@ -1024,6 +1048,16 @@ def main(argv=None):
     p.add_argument("--target", type=float, default=90.0, help="used only for runs without a target column")
     p.add_argument("--k", type=int, default=5, help="neighbours of the non-linear reader")
     p.set_defaults(fn=cmd_disturb_recheck)
+
+    p = sub.add_parser("ring-compare", help="does one direction ring describe two activation sets "
+                                            "(e.g. ordinary and stepped videos)?")
+    p.add_argument("--a", required=True, help="activation cache A")
+    p.add_argument("--b", required=True, help="activation cache B (same model)")
+    p.add_argument("--layers", default="8")
+    p.add_argument("--col", default="direction_deg")
+    p.add_argument("--harmonics", type=int, default=2)
+    p.add_argument("--out", default=None, help="CSV to write")
+    p.set_defaults(fn=cmd_ring_compare)
 
     p = sub.add_parser("disturb-figure", help="picture of a disturb run: predicted directions before "
                                               "and after the steer")

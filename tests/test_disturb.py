@@ -99,6 +99,22 @@ def test_subspace_shifts_reach_target_at_the_layer():
     assert info["layer_read_err_to_target_after"] < 20 < info["layer_read_err_to_target_before"]
 
 
+def test_ring_compare_same_and_different_rings():
+    rng = np.random.default_rng(4)
+    ang = np.tile(np.arange(0, 360, 45), 20).astype(float)
+    th = np.deg2rad(ang)
+    F = np.c_[np.cos(th), np.sin(th)]
+    A1, A2 = rng.standard_normal((2, 48)), rng.standard_normal((2, 48))
+    X1 = F @ A1 + rng.normal(0, .1, (len(th), 48))
+    X2 = F @ A1 + rng.normal(0, .1, (len(th), 48))
+    X3 = F @ A2 + rng.normal(0, .1, (len(th), 48))
+    same = disturb.ring_compare(X1, ang, X2, ang, harmonics=1)
+    diff = disturb.ring_compare(X1, ang, X3, ang, harmonics=1)
+    assert same["mean_angle_deg"] < 15 < diff["mean_angle_deg"]
+    assert same["b_ring_r2_other_ring"] > 0.8 > diff["b_ring_r2_other_ring"]
+    assert same["a_probe_err_deg"] < 10
+
+
 def test_matched_ids():
     lab = pd.DataFrame({"direction_deg": [0, 90, 0, 90], "speed": [1, 1, 2, 2], "start_id": [0, 0, 0, 0]})
     m = disturb.matched_ids(lab, "direction_deg", 90, ["speed", "start_id"])
@@ -195,6 +211,9 @@ def test_disturb_command_on_tiny_model(tmp_path):
           "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "subspace",
           "--probes", "2"])
     assert (tmp_path / "s" / "disturb_L1_subspace.json").exists()
+    main(["ring-compare", "--a", str(tmp_path / "acts"), "--b", str(tmp_path / "acts"), "--layers", "1",
+          "--out", str(tmp_path / "rc.csv")])
+    assert (tmp_path / "rc.csv").exists()
     assert "shuffled" not in set(pd.read_csv(tmp_path / "s" / "disturb_L1.csv").kind)
     main(["disturb-figure", "--run", str(tmp_path / "d"), "--data", str(tmp_path / "data"), "--layer", "1",
           "--scale", "8", "--examples", "3"])

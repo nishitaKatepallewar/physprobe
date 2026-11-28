@@ -533,3 +533,67 @@ def flip(df: pd.DataFrame, metric: str = "l2") -> pd.DataFrame:
             r[f"flip_z_vs_{kind}"] = float(diff.mean() / se) if se > 0 else np.nan
         out.append(r)
     return pd.DataFrame(out)
+
+
+def _ring_basis(angles_deg, harmonics):
+    t = np.deg2rad(np.asarray(angles_deg, float))
+    return np.stack([f(k * t) for k in range(1, harmonics + 1) for f in (np.cos, np.sin)], -1)
+
+
+def ring_compare(XA, angA, XB, angB, harmonics: int = 2, folds: int = 5, seed: int = 0) -> dict:
+    """How well a direction ring describes each of two activation sets, and whether the
+    two rings are the same. Per set: held-out direction-probe error (deg), held-out
+    share of variance explained by its own ring, share explained by the other set's
+    ring (each set centred on its own mean, ring coefficients fixed, amplitude refitted
+    by one scalar), and ring amplitude. Between rings: principal angles of their
+    2*harmonics-dimensional spans, against random subspaces of that size."""
+    from .subspace import principal_angles
+    rng = np.random.default_rng(seed)
+
+    def fit(X, a):
+        F = _ring_basis(a, harmonics)
+        return np.linalg.lstsq(F - F.mean(0), X - X.mean(0), rcond=None)[0]  # [2h, d]
+
+    def stats(X, a):
+        a = np.asarray(a, float)
+        th = np.deg2rad(a)
+        Y = np.stack([np.sin(th), np.cos(th)], 1)
+        idx = rng.permutation(len(X)) % folds
+        err, sse, sst = [], 0.0, 0.0
+        for f in range(folds):
+            tr, te = idx != f, idx == f
+            Q = _fit_reader(X[tr], Y[tr])(X[te])
+            pa = np.rad2deg(np.arctan2(Q[:, 0], Q[:, 1])) % 360
+            err.append(np.abs((pa - a[te] + 180) % 360 - 180))
+            C = fit(X[tr], a[tr])
+            F = _ring_basis(a, harmonics)
+            pred = (F[te] - F[tr].mean(0)) @ C + X[tr].mean(0)
+            sse += ((X[te] - pred) ** 2).sum()
+            sst += ((X[te] - X[tr].mean(0)) ** 2).sum()
+        return float(np.concatenate(err).mean()), float(1 - sse / sst)
+
+    def explained_by(X, a, C):
+        F = _ring_basis(a, harmonics)
+        G = (F - F.mean(0)) @ C
+        Xc = X - X.mean(0)
+        k = float((G * Xc).sum() / max((G * G).sum(), 1e-12))
+        return float(1 - ((Xc - k * G) ** 2).sum() / (Xc ** 2).sum()), k
+
+    CA, CB = fit(XA, angA), fit(XB, angB)
+    QA, QB = np.linalg.qr(CA.T)[0], np.linalg.qr(CB.T)[0]
+    ang = principal_angles(QA, QB)
+    d, m = QA.shape
+    rand = [principal_angles(np.linalg.qr(rng.standard_normal((d, m)))[0],
+                             np.linalg.qr(rng.standard_normal((d, m)))[0]).mean() for _ in range(50)]
+    out = {}
+    for name, X, a, Cown, Coth in (("a", XA, angA, CA, CB), ("b", XB, angB, CB, CA)):
+        e, r2 = stats(X, a)
+        r2o, k = explained_by(X, a, Coth)
+        r2s, _ = explained_by(X, a, Cown)
+        out.update({f"{name}_probe_err_deg": e, f"{name}_ring_r2_heldout": r2,
+                    f"{name}_ring_r2_own_fit": r2s, f"{name}_ring_r2_other_ring": r2o,
+                    f"{name}_other_ring_gain": k,
+                    f"{name}_ring_amplitude_rel": float(np.linalg.norm(Cown) / np.sqrt((X - X.mean(0)) .var(0).sum()))})
+    out.update({"ring_dims": m, "principal_angles_deg": [round(float(x), 1) for x in ang],
+                "mean_angle_deg": float(ang.mean()), "mean_angle_random_deg": float(np.mean(rand))})
+    return out
