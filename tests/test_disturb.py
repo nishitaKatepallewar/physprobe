@@ -74,6 +74,17 @@ def test_recheck_readers():
         assert r.reader_err_deg < 20 and r.err_to_target_steer < 10 and r.err_to_target_permuted > 60
 
 
+def test_flip_gap():
+    rows = []
+    for v in range(4):
+        rows += [{"video": v, "kind": "unperturbed", "scale": 0.0, "l2": 1.0, "l2_to_target": 3.0},
+                 {"video": v, "kind": "steer", "scale": 0.4, "l2": 2.5, "l2_to_target": 1.5},
+                 {"video": v, "kind": "permuted", "scale": 0.4, "l2": 1.2, "l2_to_target": 3.0}]
+    r = disturb.flip(pd.DataFrame(rows)).iloc[0]
+    assert r.flip_unperturbed == 0 and r.flip_steer == 1 and r.flip_permuted == 0
+    assert abs(r.gap_closed_steer - 1.5) < 1e-9 and abs(r.gap_closed_permuted - 0.1) < 1e-9
+
+
 def test_matched_ids():
     lab = pd.DataFrame({"direction_deg": [0, 90, 0, 90], "speed": [1, 1, 2, 2], "start_id": [0, 0, 0, 0]})
     m = disturb.matched_ids(lab, "direction_deg", 90, ["speed", "start_id"])
@@ -162,6 +173,7 @@ def test_disturb_command_on_tiny_model(tmp_path):
     assert "pred_speed_change" not in r.columns or r.pred_speed_change.notna().any()
     main(["disturb-recheck", "--run", str(tmp_path / "r")])
     assert (tmp_path / "r" / "disturb_recheck.csv").exists()
+    assert (tmp_path / "r" / "disturb_flip.csv").exists()
     main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "x"), "--tiny",
           "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "ring",
           "--sizes", "0.3", "--ring-from", str(tmp_path / "acts")])

@@ -487,7 +487,7 @@ def cmd_disturb(a):
 def cmd_disturb_recheck(a):
     from . import disturb
     run = Path(a.run)
-    rows = []
+    rows, flips = [], []
     for f in sorted(run.glob("disturb_L*.csv")):
         m = re.match(r"disturb_L(\d+)\.csv", f.name)
         npz = run / f"disturb_L{m.group(1)}_predictions.npz" if m else None
@@ -499,6 +499,10 @@ def cmd_disturb_recheck(a):
         r = disturb.recheck(df, P, a.col, target, a.k)
         r.insert(0, "layer", int(m.group(1)))
         rows.append(r)
+        fl = disturb.flip(df)
+        if len(fl):
+            fl.insert(0, "layer", int(m.group(1)))
+            flips.append(fl)
     if not rows:
         raise SystemExit(f"no disturb_L*.csv with saved predictions in {run}")
     out = pd.concat(rows)
@@ -509,6 +513,19 @@ def cmd_disturb_recheck(a):
         print(f"  layer {int(r.layer)} size {r.scale:g} {r.reader:7s} reader error {r.reader_err_deg:5.1f} | "
               + "  ".join(f"{k} {r[f'err_to_target_{k}']:.1f}" for k in kinds))
     print(f"-> {run}/disturb_recheck.csv")
+    if flips:
+        fl = pd.concat(flips)
+        fl.to_csv(run / "disturb_flip.csv", index=False)
+        print("No reader: is the predicted future closer to the matched target-direction video's real future "
+              "than to its own?")
+        kinds = sorted(c[len("gap_closed_"):] for c in fl.columns
+                       if c.startswith("gap_closed_") and not c.endswith("_se"))
+        for _, r in fl.iterrows():
+            print(f"  layer {int(r.layer)} size {r.scale:g} ({int(r.videos)} videos) flipped: "
+                  + "  ".join(f"{k} {r[f'flip_{k}']:.0%}" for k in ["unperturbed"] + [k for k in kinds if k != "unperturbed"]))
+            print("      gap closed: " + "  ".join(
+                f"{k} {r[f'gap_closed_{k}']:+.2f}±{r[f'gap_closed_{k}_se']:.2f}" for k in kinds))
+        print(f"-> {run}/disturb_flip.csv")
 
 
 def cmd_disturb_figure(a):
