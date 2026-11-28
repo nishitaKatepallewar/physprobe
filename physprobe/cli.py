@@ -486,11 +486,12 @@ def cmd_disturb(a):
     v.to_csv(out / "disturb_verdict.csv", index=False)
     print("\nDecision rule: PASS if (1) the reader reads held-out predictions to within 45 deg, (2) the steer "
           "brings the prediction closer to the real future of a video moving in the target direction than no "
-          "steering does (approach z <= -2), and (3) closer than every control does (pull z >= +2).")
+          "steering does (approach z <= -2), (3) closer to it relative to the video's own future (gap z <= -2), "
+          "and (4) closer than every control does (pull z >= +2).")
     for _, r in v.iterrows():
         zs = "  ".join(f"{c[len('pull_z_vs_'):]} z={r[c]:+.1f}" for c in v.columns if c.startswith("pull_z_vs_"))
         print(f"  layer {int(r.layer)} size {r['size']:g}: reader {r.reader_err_deg:.1f} deg  "
-              f"approach z={r.approach_z:+.1f}  pull: {zs}  -> {r.verdict}")
+              f"approach z={r.approach_z:+.1f}  gap z={r.specific_z:+.1f}  pull: {zs}  -> {r.verdict}")
     print(f"-> {out}/disturb_summary.csv, disturb_L*.csv")
 
 
@@ -544,11 +545,12 @@ def cmd_disturb_recheck(a):
     allsum.to_csv(run / "disturb_summary.csv", index=False)
     v = disturb.verdict(allsum)
     v.to_csv(run / "disturb_verdict.csv", index=False)
-    print("Decision rule: reader within 45 deg, approach to the target video's future vs no steering "
-          "z <= -2, and pull vs every control z >= +2:")
+    print("Decision rule: reader within 45 deg; approach to the target video's future vs no steering "
+          "z <= -2; closer to it relative to the own future (gap shrinks) z <= -2; pull vs every control z >= +2:")
     for _, r in v.iterrows():
         zs = "  ".join(f"{c[len('pull_z_vs_'):]} {r[c]:+.1f}" for c in v.columns if c.startswith("pull_z_vs_"))
-        print(f"  layer {int(r.layer)} size {r['size']:g}: approach z {r.approach_z:+.1f} | pull z {zs} -> {r.verdict}")
+        print(f"  layer {int(r.layer)} size {r['size']:g}: approach z {r.approach_z:+.1f} | gap z {r.specific_z:+.1f} "
+              f"| pull z {zs} -> {r.verdict}")
     print(f"-> {run}/disturb_verdict.csv (rewritten)")
 
 

@@ -49,6 +49,10 @@ def test_verdict_rule():
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "FAIL"
     row.update(approach=-0.003)
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "PASS"
+    row.update(specific=0.0005, specific_se=0.001)  # closer to every future alike: not direction
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "FAIL"
+    row.update(specific=-0.004)
+    assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0] == "PASS"
     row["reader_err_deg"] = 70.0
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0].startswith("NO VERDICT")
 
