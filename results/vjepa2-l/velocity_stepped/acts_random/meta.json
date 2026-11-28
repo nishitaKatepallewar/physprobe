@@ -18,7 +18,7 @@
   "fc1_layers": [],
   "fc2_layers": [],
   "attn_edit": null,
-  "dataset": "data/velocity_stepped",
+  "dataset": "velocity_stepped",
   "dataset_meta": {
     "type": "synthetic",
     "family": "velocity_stepped",

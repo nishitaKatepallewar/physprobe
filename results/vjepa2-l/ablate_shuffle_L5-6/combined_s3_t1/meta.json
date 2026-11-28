@@ -27,10 +27,10 @@
     "combine": "or",
     "heads": null
   },
-  "dataset": "data/shuffled_pairs",
+  "dataset": "shuffled_pairs",
   "dataset_meta": {
     "type": "shuffled",
-    "source": "/home/nishita-katepallewar/work/projects/physprobe/data/velocity",
+    "source": "velocity",
     "frames": 16,
     "block": 2,
     "targets": {

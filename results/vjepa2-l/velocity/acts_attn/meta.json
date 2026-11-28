@@ -18,7 +18,7 @@
   "fc1_layers": [],
   "fc2_layers": [],
   "attn_edit": null,
-  "dataset": "data/velocity",
+  "dataset": "velocity",
   "dataset_meta": {
     "type": "synthetic",
     "family": "velocity",

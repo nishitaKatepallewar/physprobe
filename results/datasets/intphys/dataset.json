@@ -1,0 +1,11 @@
+{
+  "type": "folder",
+  "frames": 16,
+  "sampling": "uniform",
+  "stride": 1,
+  "targets": {
+    "possible": "binary"
+  },
+  "group": "scene",
+  "source": "intphys"
+}

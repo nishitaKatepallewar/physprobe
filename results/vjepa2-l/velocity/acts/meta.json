@@ -82,7 +82,7 @@
     23
   ],
   "attn_edit": null,
-  "dataset": "data/velocity",
+  "dataset": "velocity",
   "dataset_meta": {
     "type": "synthetic",
     "family": "velocity",

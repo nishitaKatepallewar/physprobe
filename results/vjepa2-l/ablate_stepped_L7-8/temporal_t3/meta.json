@@ -27,7 +27,7 @@
     "combine": "or",
     "heads": null
   },
-  "dataset": "data/velocity_stepped",
+  "dataset": "velocity_stepped",
   "dataset_meta": {
     "type": "synthetic",
     "family": "velocity_stepped",

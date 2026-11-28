@@ -1,6 +1,6 @@
 {
   "type": "shuffled",
-  "source": "/home/nishita-katepallewar/work/projects/physprobe/data/velocity",
+  "source": "velocity",
   "frames": 16,
   "block": 2,
   "targets": {
