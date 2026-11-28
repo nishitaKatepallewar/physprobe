@@ -27,7 +27,7 @@
     "combine": "or",
     "heads": null
   },
-  "dataset": "data/velocity",
+  "dataset": "velocity",
   "dataset_meta": {
     "type": "synthetic",
     "family": "velocity",
