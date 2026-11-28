@@ -49,6 +49,31 @@ def test_verdict_rule():
     assert disturb.verdict(pd.DataFrame([row])).verdict.iloc[0].startswith("NO VERDICT")
 
 
+def test_ring_from_another_set():
+    rng = np.random.default_rng(1)
+    ang = np.repeat(np.arange(0, 360, 45), 4).astype(float)
+    th = np.deg2rad(ang)
+    a, b = rng.standard_normal(12), rng.standard_normal(12)
+    X_src = np.cos(th)[:, None] * a + np.sin(th)[:, None] * b
+    X = X_src * 1.0 + rng.standard_normal(X_src.shape) * 0.01
+    D_self = disturb.ring_shifts(X, ang, 0.0, 1)
+    D_src = disturb.ring_shifts(X, ang, 0.0, 1, source=(X_src, ang))
+    np.testing.assert_allclose(D_self, D_src, atol=0.05)
+
+
+def test_recheck_readers():
+    rng = np.random.default_rng(2)
+    rows, P = [], []
+    for v, ang in enumerate(np.repeat(np.arange(0, 360, 45), 3)):
+        for kind in ("unperturbed", "steer", "permuted"):
+            shown = 90 if kind == "steer" else ang
+            P.append(np.r_[np.cos(np.deg2rad(shown)), np.sin(np.deg2rad(shown)), rng.normal(0, .05, 6)])
+            rows.append({"video": v, "direction_deg": ang, "kind": kind, "scale": 0.0 if kind == "unperturbed" else 0.4})
+    out = disturb.recheck(pd.DataFrame(rows), np.array(P), "direction_deg", 90.0, k=3)
+    for _, r in out.iterrows():
+        assert r.reader_err_deg < 20 and r.err_to_target_steer < 10 and r.err_to_target_permuted > 60
+
+
 def test_matched_ids():
     lab = pd.DataFrame({"direction_deg": [0, 90, 0, 90], "speed": [1, 1, 2, 2], "start_id": [0, 0, 0, 0]})
     m = disturb.matched_ids(lab, "direction_deg", 90, ["speed", "start_id"])
@@ -135,6 +160,11 @@ def test_disturb_command_on_tiny_model(tmp_path):
     np.testing.assert_allclose(r[r.kind == "steer"].shift_rel, 0.3, rtol=1e-4)
     assert np.load(tmp_path / "r" / "disturb_L1_predictions.npz")["pooled"].shape[0] == len(r)
     assert "pred_speed_change" not in r.columns or r.pred_speed_change.notna().any()
+    main(["disturb-recheck", "--run", str(tmp_path / "r")])
+    assert (tmp_path / "r" / "disturb_recheck.csv").exists()
+    main(["disturb", "--acts", str(tmp_path / "acts"), "--out", str(tmp_path / "x"), "--tiny",
+          "--device", "cpu", "--n", "8", "--controls", "1", "--layers", "1", "--method", "ring",
+          "--sizes", "0.3", "--ring-from", str(tmp_path / "acts")])
     main(["disturb-figure", "--run", str(tmp_path / "d"), "--data", str(tmp_path / "data"), "--layer", "1",
           "--scale", "8", "--examples", "3"])
     assert (tmp_path / "d" / "disturb_L1_x8.png").stat().st_size > 10_000
@@ -143,7 +173,7 @@ def test_disturb_command_on_tiny_model(tmp_path):
     from physprobe.gui import data as D
     from physprobe.gui import figures as F
     found = D.discover(tmp_path, tmp_path / "data")
-    assert [e["name"] for e in found.steering] == ["d", "r"]
+    assert [e["name"] for e in found.steering] == ["d", "r", "x"]
     bundle = export_bundle(tmp_path, tmp_path.parent / f"{tmp_path.name}_bundle", data=tmp_path / "data",
                            progress=lambda *_: None)
     res = D.read_disturb(D.discover(bundle).steering[0]["path"])

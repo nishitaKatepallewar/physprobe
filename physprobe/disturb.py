@@ -80,19 +80,22 @@ def _ln(x):
     return F.layer_norm(x, (x.shape[-1],))
 
 
-def ring_shifts(X: np.ndarray, angles_deg: np.ndarray, target_deg: float, harmonics: int = 2):
+def ring_shifts(X: np.ndarray, angles_deg: np.ndarray, target_deg: float, harmonics: int = 2,
+                source=None):
     """Shift along a fitted ring instead of between condition means. A smooth model
-    x ~ mu + sum_k A_k cos(k th) + B_k sin(k th) is fitted by least squares over all
-    videos; each video is moved from its own angle to the target angle on that model,
-    keeping everything the model does not explain (its residual) unchanged. The shift
-    lies in the 2 * harmonics dimensions of the ring, so it carries no other factor."""
-    th = np.deg2rad(angles_deg.astype(float))
+    x ~ mu + sum_k A_k cos(k th) + B_k sin(k th) is fitted by least squares; each video
+    is moved from its own angle to the target angle on that model, keeping everything
+    the model does not explain (its residual) unchanged. The shift lies in the
+    2 * harmonics dimensions of the ring, so it carries no other factor.
+    source: (X_src, angles_src) fits the ring on another set of videos (e.g. stepped
+    videos) and applies it to these ones; default: fit on X itself."""
     def basis(t):
         return np.stack([f(k * t) for k in range(1, harmonics + 1) for f in (np.cos, np.sin)], -1)
-    F = basis(th)
-    Fc = F - F.mean(0)
-    coef, *_ = np.linalg.lstsq(Fc, X - X.mean(0), rcond=None)  # [2K, d]
-    tgt = basis(np.full(len(th), np.deg2rad(float(target_deg))))
+    Xs, angs = (X, angles_deg) if source is None else source
+    Fs = basis(np.deg2rad(np.asarray(angs, dtype=float)))
+    coef, *_ = np.linalg.lstsq(Fs - Fs.mean(0), Xs - Xs.mean(0), rcond=None)  # [2K, d]
+    F = basis(np.deg2rad(np.asarray(angles_deg, dtype=float)))
+    tgt = basis(np.full(len(F), np.deg2rad(float(target_deg))))
     return (tgt - F) @ coef
 
 
@@ -107,7 +110,8 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
         n_controls: int = 3, control_kinds=("permuted", "random", "shuffled"),
         match_cols=("speed", "start_id"), batch_size: int = 4, seed: int = 0, frames: int | None = None,
         scales=(1.0,), target_norm: bool = True, method: str = "mean", sizes=None,
-        speed_col: str | None = "speed", harmonics: int = 2, progress=None) -> pd.DataFrame:
+        speed_col: str | None = "speed", harmonics: int = 2, ring_source=None,
+        progress=None) -> pd.DataFrame:
     """One row per (video, condition). Conditions: unperturbed, and for every scale s
     steer@s and <kind>_<k>@s (controls with the norm of the scaled steer).
 
@@ -132,14 +136,14 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
     vals = labels[col].to_numpy()
     delta_all, near = condition_shifts(X, vals, target)
     if method == "ring":
-        delta_all = ring_shifts(X, vals, float(near), harmonics)
+        delta_all = ring_shifts(X, vals, float(near), harmonics, ring_source)
     elif method != "mean":
         raise ValueError(f"method {method!r}")
     norms = np.linalg.norm(X, axis=1)
 
     def build(v):
         if method == "ring":
-            return ring_shifts(X, v, float(near), harmonics)
+            return ring_shifts(X, v, float(near), harmonics, ring_source)
         return condition_shifts(X, v, near)[0]
     def build_shuffled():
         S = build(rng.permutation(vals))
@@ -208,6 +212,7 @@ def run(enc, ds, cache, layer: int, col: str, target, ids, context: int | None =
         if progress:
             progress(bi + 1, len(batches))
     df = pd.DataFrame(rows)
+    df["target"] = near
     P = np.stack(pooled)
     df.attrs.update(layer=layer, target=near, context_tubelets=context, tubelets=Tt, method=method)
     _decode_predictions(df, P, col, near, speed_col)
@@ -401,4 +406,43 @@ def verdict(summary: pd.DataFrame, n_se: float = 2.0, reader_max_deg: float = 45
                     "reader_ok": reader_ok, **{f"pull_z_vs_{c}": m for c, m in margins.items()},
                     "verdict": "PASS" if (reader_ok and beats) else
                                "NO VERDICT (reader too weak)" if not reader_ok else "FAIL"})
+    return pd.DataFrame(out)
+
+
+# ----------------------------------------------------------- reader cross-check
+
+def recheck(df: pd.DataFrame, P: np.ndarray, col: str, target: float, k: int = 5) -> pd.DataFrame:
+    """Re-read the predicted direction with two leave-one-video-out readers fitted on
+    the unperturbed predictions of the other videos: the linear ridge reader used by
+    `run`, and a non-linear one (k nearest neighbours by cosine similarity, circular
+    mean of their directions). Returns, per scale and reader, the held-out reader error
+    and the mean error to the target under each condition kind."""
+    base = (df.kind == "unperturbed").to_numpy()
+    vid = df.video.to_numpy()
+    ang_true = df[col].to_numpy(dtype=float)
+    th = np.deg2rad(ang_true)
+    Y = np.stack([np.sin(th), np.cos(th)], 1)
+    Pn = P / np.maximum(np.linalg.norm(P, axis=1, keepdims=True), 1e-12)
+    lin = np.full(len(df), np.nan)
+    knn = np.full(len(df), np.nan)
+    for v in np.unique(vid):
+        tr, rows = base & (vid != v), vid == v
+        Q = _fit_reader(P[tr], Y[tr])(P[rows])
+        lin[rows] = np.rad2deg(np.arctan2(Q[:, 0], Q[:, 1])) % 360
+        sim = Pn[rows] @ Pn[tr].T
+        nn = np.argsort(-sim, axis=1)[:, :k]
+        t = th[tr][nn]
+        knn[rows] = np.rad2deg(np.arctan2(np.sin(t).mean(1), np.cos(t).mean(1))) % 360
+    out = []
+    for name, a in (("linear", lin), (f"knn{k}", knn)):
+        err_t = np.abs((a - target + 180) % 360 - 180)
+        err_true = np.abs((a - ang_true + 180) % 360 - 180)
+        d = df.assign(err_t=err_t)
+        for sc in sorted(s for s in df.scale.unique() if s > 0):
+            part = d[(d.scale == sc) | (d.kind == "unperturbed")]
+            per = part.groupby(["video", "kind"]).err_t.mean().unstack()
+            r = {"reader": name, "scale": sc, "reader_err_deg": err_true[base].mean()}
+            for kind in per.columns:
+                r[f"err_to_target_{kind}"] = per[kind].mean()
+            out.append(r)
     return pd.DataFrame(out)

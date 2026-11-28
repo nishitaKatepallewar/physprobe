@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -425,10 +426,15 @@ def cmd_disturb(a):
     for l in layers:
         bar = tqdm(total=-(-len(ids) // a.batch_size), desc=f"disturb L{l}", unit="batch")
         sizes = [float(x) for x in a.sizes.split(",")] if a.sizes else None
+        ring_source = None
+        if a.ring_from:
+            src = ActivationCache(a.ring_from)
+            ring_source = (src.layer(l).astype(np.float64), src.labels[a.col].to_numpy())
         df, P = disturb.run(enc, ds, c, l, a.col, a.target, ids, a.context, a.controls,
                             batch_size=a.batch_size, seed=a.seed, frames=a.frames, match_cols=a.match,
                             scales=scales, target_norm=not a.raw_targets, method=a.method, sizes=sizes,
-                            harmonics=a.harmonics, progress=lambda i, n: bar.update(1))
+                            harmonics=a.harmonics, ring_source=ring_source,
+                            progress=lambda i, n: bar.update(1))
         bar.close()
         df.to_csv(out / f"disturb_L{l}.csv", index=False)
         np.savez_compressed(out / f"disturb_L{l}_predictions.npz", pooled=P.astype(np.float32))
@@ -476,6 +482,33 @@ def cmd_disturb(a):
         zs = "  ".join(f"{c[len('pull_z_vs_'):]} z={r[c]:+.1f}" for c in v.columns if c.startswith("pull_z_vs_"))
         print(f"  layer {int(r.layer)} size {r['size']:g}: reader {r.reader_err_deg:.1f} deg  {zs}  -> {r.verdict}")
     print(f"-> {out}/disturb_summary.csv, disturb_L*.csv")
+
+
+def cmd_disturb_recheck(a):
+    from . import disturb
+    run = Path(a.run)
+    rows = []
+    for f in sorted(run.glob("disturb_L*.csv")):
+        m = re.match(r"disturb_L(\d+)\.csv", f.name)
+        npz = run / f"disturb_L{m.group(1)}_predictions.npz" if m else None
+        if not m or not npz.exists():
+            continue
+        df = pd.read_csv(f)
+        P = np.load(npz)["pooled"].astype(np.float64)
+        target = float(df.target.iloc[0]) if "target" in df else a.target
+        r = disturb.recheck(df, P, a.col, target, a.k)
+        r.insert(0, "layer", int(m.group(1)))
+        rows.append(r)
+    if not rows:
+        raise SystemExit(f"no disturb_L*.csv with saved predictions in {run}")
+    out = pd.concat(rows)
+    out.to_csv(run / "disturb_recheck.csv", index=False)
+    kinds = [c[len("err_to_target_"):] for c in out.columns if c.startswith("err_to_target_")]
+    print("Predicted direction, mean error to the target (deg), read by two held-out readers:")
+    for _, r in out.iterrows():
+        print(f"  layer {int(r.layer)} size {r.scale:g} {r.reader:7s} reader error {r.reader_err_deg:5.1f} | "
+              + "  ".join(f"{k} {r[f'err_to_target_{k}']:.1f}" for k in kinds))
+    print(f"-> {run}/disturb_recheck.csv")
 
 
 def cmd_disturb_figure(a):
@@ -933,6 +966,9 @@ def main(argv=None):
     p.add_argument("--method", default="mean", choices=["mean", "ring"],
                    help="mean: difference of condition means; ring: move along a fitted ring")
     p.add_argument("--harmonics", type=int, default=2, help="harmonics of the ring model (--method ring)")
+    p.add_argument("--ring-from", default=None, metavar="ACTS",
+                   help="fit the ring on another activation cache (same model), e.g. stepped videos, "
+                        "and apply it to this dataset (--method ring)")
     p.add_argument("--sizes", default=None,
                    help="shift sizes as fractions of each activation's norm, e.g. 0.2,0.4 (replaces --scales)")
     p.add_argument("--raw-targets", action="store_true",
@@ -950,6 +986,14 @@ def main(argv=None):
     p.add_argument("--random-init", action="store_true")
     p.add_argument("--tiny", action="store_true")
     p.set_defaults(fn=cmd_disturb)
+
+    p = sub.add_parser("disturb-recheck", help="re-read a disturb run's predictions with a linear and a "
+                                               "non-linear (nearest-neighbour) held-out reader")
+    p.add_argument("--run", required=True, help="output folder of disturb (needs the saved predictions)")
+    p.add_argument("--col", default="direction_deg")
+    p.add_argument("--target", type=float, default=90.0, help="used only for runs without a target column")
+    p.add_argument("--k", type=int, default=5, help="neighbours of the non-linear reader")
+    p.set_defaults(fn=cmd_disturb_recheck)
 
     p = sub.add_parser("disturb-figure", help="picture of a disturb run: predicted directions before "
                                               "and after the steer")
